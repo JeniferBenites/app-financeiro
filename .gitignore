@@ -23,3 +23,7 @@ android/capacitor-cordova-android-plugins/
 android/keystore.properties
 android/*.jks
 android/*.keystore
+
+# pacotes OTA (ficam no Supabase Storage)
+bundle-*.zip
+app-manifest.json

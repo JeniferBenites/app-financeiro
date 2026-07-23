@@ -357,7 +357,8 @@ begin
 
   for i in 1 .. array_length(ladder, 1) loop
     insert into public.goals (user_id, ordem, titulo, valor_alvo, status)
-    values (new.id, i, titulos[i], ladder[i], case when i = 1 then 'ativa' else 'bloqueada' end)
+    values (new.id, i, titulos[i], ladder[i],
+            (case when i = 1 then 'ativa' else 'bloqueada' end)::goal_status)
     on conflict (user_id, ordem) do nothing;
   end loop;
 

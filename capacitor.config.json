@@ -1,0 +1,8 @@
+{
+  "appId": "com.patrimonio10x.app",
+  "appName": "Patrimônio 10X",
+  "webDir": "dist",
+  "android": {
+    "backgroundColor": "#F7F6FB"
+  }
+}

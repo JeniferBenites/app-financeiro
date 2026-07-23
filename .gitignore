@@ -6,3 +6,15 @@ supabase/.env
 .DS_Store
 *.log
 .vite/
+
+# Capacitor / Android
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/.idea/
+android/app/release/
+android/capacitor-cordova-android-plugins/
+*.apk
+*.aab
+.gradle/

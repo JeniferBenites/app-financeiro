@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Patrimônio 10X</string>
+    <string name="title_activity_main">Patrimônio 10X</string>
+    <string name="package_name">com.patrimonio10x.app</string>
+    <string name="custom_url_scheme">com.patrimonio10x.app</string>
+</resources>

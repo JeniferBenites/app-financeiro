@@ -9,7 +9,7 @@ import {
   PiggyBank, Award, Sun, Moon, Send, Info, ArrowLeft, Lock, Trophy,
   GraduationCap, HelpCircle, LogOut, RefreshCw, BarChart3,
 } from "lucide-react";
-import { fetchQuotes, fetchDolar } from "./lib/market";
+import { fetchQuotes, fetchDolar, fetchOne } from "./lib/market";
 import { useSession } from "./hooks/useSession";
 import Auth from "./screens/Auth.jsx";
 import {
@@ -546,6 +546,22 @@ function MercadoB3({ C }) {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(false);
   const [hora, setHora] = useState("");
+  const [busca, setBusca] = useState("");
+  const [buscando, setBuscando] = useState(false);
+  const [buscaMsg, setBuscaMsg] = useState("");
+
+  async function buscar(e) {
+    e?.preventDefault();
+    const s = busca.trim().toUpperCase();
+    if (!s || buscando) return;
+    setBuscando(true);
+    setBuscaMsg("");
+    const q = await fetchOne(s);
+    setBuscando(false);
+    if (!q) { setBuscaMsg(`“${s}” não encontrado.`); return; }
+    setQuotes((prev) => [q, ...prev.filter((x) => x.symbol !== q.symbol)]);
+    setBusca("");
+  }
 
   async function carregar() {
     setLoading(true);
@@ -581,6 +597,15 @@ function MercadoB3({ C }) {
       <div style={{ fontSize: 11.5, color: C.textMut, marginBottom: 12 }}>
         Cotações do dia {hora && `· atualizado ${hora}`} · informativo, pode ter atraso
       </div>
+
+      <form onSubmit={buscar} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar ação (ex.: PETR4, VALE3)"
+          style={{ flex: 1, background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 13px", fontSize: 13.5, color: C.text, outline: "none" }} />
+        <button type="submit" disabled={buscando} style={{ background: C.primary, color: "#fff", border: "none", borderRadius: 12, padding: "0 16px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: buscando ? 0.7 : 1 }}>
+          {buscando ? "…" : "Buscar"}
+        </button>
+      </form>
+      {buscaMsg && <div style={{ fontSize: 12, color: C.negative, marginTop: -6, marginBottom: 10 }}>{buscaMsg}</div>}
 
       {loading && <div style={{ color: C.textMut, fontSize: 13, padding: "8px 0" }}>Carregando cotações…</div>}
 

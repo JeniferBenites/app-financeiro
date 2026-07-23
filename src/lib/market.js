@@ -1,16 +1,23 @@
 // ============================================================================
 // Cotações da B3 (somente leitura) — brapi.dev + AwesomeAPI (dólar).
-// Sem token: mostra os papéis liberados no plano gratuito.
-// Com um token grátis da brapi (VITE_BRAPI_TOKEN): desbloqueia ETFs e índices.
-// Dados informativos, possivelmente com atraso. Não é recomendação.
+// Com token da brapi: todos os ativos liberados (Ibovespa, ETFs, ações).
+// Plano gratuito da brapi = 1 ativo por requisição, então buscamos em paralelo.
+// Dados informativos, podem ter atraso. Não é recomendação.
 // ============================================================================
 
 const BRAPI = "https://brapi.dev/api/quote";
-const TOKEN = import.meta.env.VITE_BRAPI_TOKEN || "";
+// Token público de frontend da brapi (fica no bundle do cliente, como toda
+// chave de API de front). Env var tem prioridade, se definida.
+const TOKEN = import.meta.env.VITE_BRAPI_TOKEN || "jjxSEUSaaMFCw4UGAudXp4";
 
-// Com token dá para incluir ETFs e o Ibovespa; sem token, papéis grandes liberados.
-export const TICKERS_COM_TOKEN = ["^BVSP", "BOVA11", "IVVB11", "PETR4", "VALE3", "ITUB4", "BBAS3", "WEGE3", "ABEV3", "B3SA3"];
-export const TICKERS_SEM_TOKEN = ["PETR4", "VALE3", "ITUB4", "ABEV3", "BBDC4", "MGLU3", "PETR3", "B3SA3"];
+// Com token: universo completo. Sem token: subconjunto liberado no free.
+export const TICKERS_FULL = [
+  "^BVSP", "BOVA11", "IVVB11", "PETR4", "VALE3", "ITUB4",
+  "BBAS3", "BBDC4", "ABEV3", "WEGE3", "B3SA3", "MGLU3",
+];
+export const TICKERS_FREE = ["PETR4", "VALE3", "ITUB4", "ABEV3", "BBDC4", "MGLU3"];
+
+const hasToken = Boolean(TOKEN);
 
 function mapQuote(q) {
   return {
@@ -21,6 +28,11 @@ function mapQuote(q) {
     logo: q.logourl || null,
     hora: q.regularMarketTime || null,
   };
+}
+
+function urlFor(symbol) {
+  const u = `${BRAPI}/${encodeURIComponent(symbol)}`;
+  return TOKEN ? `${u}?token=${encodeURIComponent(TOKEN)}` : u;
 }
 
 export async function fetchDolar() {
@@ -36,31 +48,24 @@ export async function fetchDolar() {
   }
 }
 
-export async function fetchQuotes() {
-  // Com token: uma única chamada em lote (mais eficiente) + índice.
-  if (TOKEN) {
-    try {
-      const url = `${BRAPI}/${TICKERS_COM_TOKEN.join(",")}?token=${encodeURIComponent(TOKEN)}`;
-      const r = await fetch(url);
-      const j = await r.json();
-      return (j.results || []).map(mapQuote).filter((q) => q.preco != null);
-    } catch {
-      return [];
-    }
+/** Busca um único ativo (usado pela busca e pela lista). Retorna obj ou null. */
+export async function fetchOne(symbol) {
+  try {
+    const r = await fetch(urlFor(symbol));
+    if (!r.ok) return null;
+    const j = await r.json();
+    const q = (j.results || [])[0];
+    return q && q.regularMarketPrice != null ? mapQuote(q) : null;
+  } catch {
+    return null;
   }
-  // Sem token: uma requisição por papel, ignorando os que exigem token (401).
-  const results = await Promise.all(
-    TICKERS_SEM_TOKEN.map(async (t) => {
-      try {
-        const r = await fetch(`${BRAPI}/${encodeURIComponent(t)}`);
-        if (!r.ok) return null;
-        const j = await r.json();
-        const q = (j.results || [])[0];
-        return q && q.regularMarketPrice != null ? mapQuote(q) : null;
-      } catch {
-        return null;
-      }
-    }),
-  );
+}
+
+/** Busca a lista padrão (paralelo, ignora os que falharem). */
+export async function fetchQuotes() {
+  const tickers = hasToken ? TICKERS_FULL : TICKERS_FREE;
+  const results = await Promise.all(tickers.map(fetchOne));
   return results.filter(Boolean);
 }
+
+export const temToken = hasToken;

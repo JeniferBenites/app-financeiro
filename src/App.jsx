@@ -5,10 +5,11 @@ import {
 } from "recharts";
 import {
   Home, Target, MessageCircle, BookOpen, Calculator as CalcIcon,
-  TrendingUp, Flame, Check, ChevronRight, Sparkles, Shield, Wallet,
+  TrendingUp, TrendingDown, Flame, Check, ChevronRight, Sparkles, Shield, Wallet,
   PiggyBank, Award, Sun, Moon, Send, Info, ArrowLeft, Lock, Trophy,
-  GraduationCap, HelpCircle, LogOut,
+  GraduationCap, HelpCircle, LogOut, RefreshCw, BarChart3,
 } from "lucide-react";
+import { fetchQuotes, fetchDolar } from "./lib/market";
 import { useSession } from "./hooks/useSession";
 import Auth from "./screens/Auth.jsx";
 import {
@@ -532,7 +533,96 @@ function Dashboard({ C, user, lucro, rentab, goals, items, history }) {
           <ProjCard C={C} l="Aposentadoria" v={proj[35]} hi />
         </div>
       </div>
+
+      {/* Mercado B3 */}
+      <MercadoB3 C={C} />
     </div>
+  );
+}
+
+function MercadoB3({ C }) {
+  const [dolar, setDolar] = useState(null);
+  const [quotes, setQuotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(false);
+  const [hora, setHora] = useState("");
+
+  async function carregar() {
+    setLoading(true);
+    setErro(false);
+    try {
+      const [d, q] = await Promise.all([fetchDolar(), fetchQuotes()]);
+      setDolar(d);
+      setQuotes(q);
+      if (!d && q.length === 0) setErro(true);
+      const now = new Date();
+      setHora(`${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`);
+    } catch {
+      setErro(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { carregar(); }, []);
+
+  const lista = dolar ? [dolar, ...quotes] : quotes;
+
+  return (
+    <Card C={C} style={{ padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <BarChart3 size={17} color={C.primary} />
+          <span style={{ fontWeight: 700, fontSize: 14.5 }}>Mercado — B3</span>
+        </div>
+        <button onClick={carregar} disabled={loading} title="Atualizar" style={{ background: C.surfaceAlt, border: "none", borderRadius: 10, width: 30, height: 30, display: "grid", placeItems: "center", color: C.textMut, cursor: "pointer" }}>
+          <RefreshCw size={14} style={loading ? { animation: "none", opacity: 0.5 } : {}} />
+        </button>
+      </div>
+      <div style={{ fontSize: 11.5, color: C.textMut, marginBottom: 12 }}>
+        Cotações do dia {hora && `· atualizado ${hora}`} · informativo, pode ter atraso
+      </div>
+
+      {loading && <div style={{ color: C.textMut, fontSize: 13, padding: "8px 0" }}>Carregando cotações…</div>}
+
+      {!loading && erro && (
+        <div style={{ color: C.textMut, fontSize: 13, padding: "8px 0" }}>
+          Não foi possível carregar as cotações agora. Toque em atualizar para tentar de novo.
+        </div>
+      )}
+
+      {!loading && !erro && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {lista.map((q) => {
+            const up = (q.pct ?? 0) >= 0;
+            return (
+              <div key={q.symbol} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: `1px solid ${C.border}` }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: C.surfaceAlt, display: "grid", placeItems: "center", overflow: "hidden", flexShrink: 0 }}>
+                  {q.logo
+                    ? <img src={q.logo} alt="" width={30} height={30} style={{ objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                    : <span style={{ fontSize: 11, fontWeight: 800, color: C.primary }}>{q.symbol.replace("^", "").slice(0, 4)}</span>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>{q.symbol === "^BVSP" ? "Ibovespa" : q.symbol}</div>
+                  <div style={{ fontSize: 11.5, color: C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{q.nome}</div>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ fontWeight: 800, fontSize: 13.5, fontVariantNumeric: "tabular-nums" }}>
+                    {q.symbol === "USD" ? "R$ " + q.preco.toFixed(2) : q.symbol === "^BVSP" ? Math.round(q.preco).toLocaleString("pt-BR") : "R$ " + q.preco.toFixed(2)}
+                  </div>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: up ? C.positive : C.negative, display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end" }}>
+                    {up ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                    {up ? "+" : ""}{(q.pct ?? 0).toFixed(2)}%
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ fontSize: 10.5, color: C.textMut, marginTop: 8, lineHeight: 1.4 }}>
+            Fonte: brapi.dev / AwesomeAPI. Conteúdo educacional, não é recomendação.
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 function MiniStat({ l, v }) {

@@ -104,7 +104,12 @@ export function detectarTicker(texto) {
 }
 
 // Lista analisada quando o usuário pede uma recomendação geral.
-const ATIVOS_ANALISE = ["PETR4", "VALE3", "ITUB4", "BBAS3", "BBDC4", "ABEV3", "WEGE3", "B3SA3", "MGLU3", "BOVA11", "IVVB11"];
+const ATIVOS_ANALISE = [
+  // Brasil
+  "PETR4", "VALE3", "ITUB4", "BBAS3", "WEGE3", "MGLU3", "EMBR3",
+  // Defesa & IA (via BDR)
+  "LMTB34", "RYTT34", "NOCG34", "GDBR34", "NVDC34", "MSFT34", "GOGL34", "P2LT34", "TSLA34",
+];
 
 export async function analisar(symbol) {
   try {
@@ -121,6 +126,10 @@ export async function analisar(symbol) {
     const dyRaw = d.dividendYield ?? d?.defaultKeyStatistics?.dividendYield;
     const chg = d.regularMarketChangePercent ?? 0;
 
+    // BDRs (código termina em 3X, ex.: LMTB34) têm P/L e dividendos distorcidos
+    // na fonte — para eles usamos só a faixa de preço, que é confiável.
+    const isBDR = /3\d$/.test(d.symbol);
+
     let score = 0;
     const motivos = [];
 
@@ -131,13 +140,13 @@ export async function analisar(symbol) {
       else if (faixaPct >= 75) { score--; motivos.push(`Perto da máxima de 12 meses (${faixaPct.toFixed(0)}% da faixa) — pode estar esticado.`); }
       else { motivos.push(`No meio da faixa de 12 meses (${faixaPct.toFixed(0)}%).`); }
     }
-    if (pe != null && !Number.isNaN(pe)) {
+    if (!isBDR && pe != null && !Number.isNaN(pe)) {
       if (pe > 0 && pe < 10) { score++; motivos.push(`P/L baixo (${pe.toFixed(1)}) — preço atrativo frente ao lucro.`); }
       else if (pe > 25) { score--; motivos.push(`P/L alto (${pe.toFixed(1)}) — muita expectativa no preço.`); }
       else if (pe < 0) { score--; motivos.push(`Lucro negativo (P/L ${pe.toFixed(1)}) — mais risco.`); }
       else { motivos.push(`P/L moderado (${pe.toFixed(1)}).`); }
     }
-    if (dyRaw != null && !Number.isNaN(dyRaw) && dyRaw > 0) {
+    if (!isBDR && dyRaw != null && !Number.isNaN(dyRaw) && dyRaw > 0) {
       const dyp = dyRaw <= 1 ? dyRaw * 100 : dyRaw;
       if (dyp >= 6) { score++; motivos.push(`Bons dividendos (~${dyp.toFixed(1)}% ao ano).`); }
       else { motivos.push(`Dividendos ~${dyp.toFixed(1)}% ao ano.`); }

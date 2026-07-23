@@ -23,7 +23,7 @@ export default function Auth() {
       return;
     }
     if (mode === "signup" && nome.trim().length < 2) {
-      setMsg({ ok: false, t: "Digite seu nome." });
+      setMsg({ ok: false, t: "Digite seu nome de usuário." });
       return;
     }
 
@@ -114,7 +114,7 @@ export default function Auth() {
             {mode === "signup" && (
               <div style={field}>
                 <User size={18} color="rgba(255,255,255,0.85)" />
-                <input className="p10x-in" style={inputStyle} placeholder="Seu nome" value={nome} onChange={(e) => setNome(e.target.value)} />
+                <input className="p10x-in" style={inputStyle} placeholder="Nome de usuário" value={nome} onChange={(e) => setNome(e.target.value)} />
               </div>
             )}
 

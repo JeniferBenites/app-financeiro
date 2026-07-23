@@ -22,6 +22,29 @@ Abre em http://localhost:5173.
 - **Com Supabase configurado** → login/cadastro reais, dados por usuário (RLS),
   plano mensal persistido e Mentor IA via Edge Function.
 
+## App mobile (Android, via Capacitor)
+
+O app é empacotado com **Capacitor** como app Android nativo (a mesma base React
+roda dentro do app). Requisitos: Android SDK + JDK 21 (o JBR do Android Studio serve).
+
+```bash
+npm run build            # gera dist/
+npx cap sync android     # copia dist/ para o projeto Android
+cd android
+./gradlew assembleDebug  # gera o APK
+```
+
+O APK sai em `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+Instalar num celular (com depuração USB ligada e `adb` no PATH):
+
+```bash
+adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Para abrir no Android Studio: `npx cap open android`.
+Para iOS seria `npx cap add ios` — mas exige um Mac com Xcode.
+
 ## Configurar o Supabase (para o modo real)
 
 1. **URL + chave** — em `.env.local`, preencha `VITE_SUPABASE_URL` com a URL do

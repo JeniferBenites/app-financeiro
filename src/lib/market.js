@@ -69,3 +69,75 @@ export async function fetchQuotes() {
 }
 
 export const temToken = hasToken;
+
+/* --------------------------------------------------------------------- */
+/*  Análise automática por indicadores reais (não é garantia)            */
+/* --------------------------------------------------------------------- */
+
+// Detecta um código de ativo da B3 no texto (ex.: PETR4, ITUB4, BOVA11).
+export function detectarTicker(texto) {
+  const up = (texto || "").toUpperCase();
+  const m = up.match(/\b([A-Z]{4}\d{1,2})\b/);
+  return m ? m[1] : null;
+}
+
+// Lista analisada quando o usuário pede uma recomendação geral.
+const ATIVOS_ANALISE = ["PETR4", "VALE3", "ITUB4", "BBAS3", "BBDC4", "ABEV3", "WEGE3", "B3SA3", "MGLU3", "BOVA11", "IVVB11"];
+
+export async function analisar(symbol) {
+  try {
+    const q = `${BRAPI}/${encodeURIComponent(symbol)}?fundamental=true&modules=defaultKeyStatistics${TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : ""}`;
+    const r = await fetch(q);
+    if (!r.ok) return null;
+    const j = await r.json();
+    const d = (j.results || [])[0];
+    if (!d || d.regularMarketPrice == null) return null;
+
+    const price = d.regularMarketPrice;
+    const low = d.fiftyTwoWeekLow, high = d.fiftyTwoWeekHigh;
+    const pe = d.priceEarnings;
+    const dyRaw = d.dividendYield ?? d?.defaultKeyStatistics?.dividendYield;
+    const chg = d.regularMarketChangePercent ?? 0;
+
+    let score = 0;
+    const motivos = [];
+
+    let faixaPct = null;
+    if (low != null && high != null && high > low) {
+      faixaPct = ((price - low) / (high - low)) * 100;
+      if (faixaPct <= 30) { score++; motivos.push(`Perto da mínima de 12 meses (${faixaPct.toFixed(0)}% da faixa) — mais descontado historicamente.`); }
+      else if (faixaPct >= 75) { score--; motivos.push(`Perto da máxima de 12 meses (${faixaPct.toFixed(0)}% da faixa) — pode estar esticado.`); }
+      else { motivos.push(`No meio da faixa de 12 meses (${faixaPct.toFixed(0)}%).`); }
+    }
+    if (pe != null && !Number.isNaN(pe)) {
+      if (pe > 0 && pe < 10) { score++; motivos.push(`P/L baixo (${pe.toFixed(1)}) — preço atrativo frente ao lucro.`); }
+      else if (pe > 25) { score--; motivos.push(`P/L alto (${pe.toFixed(1)}) — muita expectativa no preço.`); }
+      else if (pe < 0) { score--; motivos.push(`Lucro negativo (P/L ${pe.toFixed(1)}) — mais risco.`); }
+      else { motivos.push(`P/L moderado (${pe.toFixed(1)}).`); }
+    }
+    if (dyRaw != null && !Number.isNaN(dyRaw) && dyRaw > 0) {
+      const dyp = dyRaw <= 1 ? dyRaw * 100 : dyRaw;
+      if (dyp >= 6) { score++; motivos.push(`Bons dividendos (~${dyp.toFixed(1)}% ao ano).`); }
+      else { motivos.push(`Dividendos ~${dyp.toFixed(1)}% ao ano.`); }
+    }
+
+    let label, cor;
+    if (score >= 2) { label = "Parece atrativo"; cor = "pos"; }
+    else if (score === 1) { label = "Levemente atrativo"; cor = "pos"; }
+    else if (score === -1) { label = "Requer atenção"; cor = "neg"; }
+    else if (score <= -2) { label = "Pede cautela"; cor = "neg"; }
+    else { label = "Neutro"; cor = "mut"; }
+
+    return {
+      symbol: d.symbol, nome: d.longName || d.shortName || d.symbol,
+      price, chg, faixaPct, pe, dy: dyRaw, score, label, cor, motivos,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function analisarLista() {
+  const res = await Promise.all(ATIVOS_ANALISE.map(analisar));
+  return res.filter(Boolean).sort((a, b) => b.score - a.score);
+}

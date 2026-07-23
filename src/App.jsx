@@ -9,7 +9,7 @@ import {
   PiggyBank, Award, Sun, Moon, Send, Info, ArrowLeft, Lock, Trophy,
   GraduationCap, HelpCircle, LogOut, RefreshCw, BarChart3,
 } from "lucide-react";
-import { fetchQuotes, fetchDolar, fetchOne } from "./lib/market";
+import { fetchQuotes, fetchDolar, fetchOne, detectarTicker, analisar, analisarLista } from "./lib/market";
 import { useSession } from "./hooks/useSession";
 import Auth from "./screens/Auth.jsx";
 import {
@@ -802,8 +802,37 @@ function pickFallback(q) {
   return hit ? hit.a : "Ótima pergunta! O caminho aqui é sempre o mesmo: reserva de emergência primeiro, depois aportes constantes e diversificados pensando no longo prazo. Evite decisões por impulso. Quer que eu explique algum termo específico de forma simples?";
 }
 
+const DISCLAIMER_REC = "⚠️ Análise automática por indicadores reais (não é garantia). Rentabilidade passada não garante futura — diversifique e pense no longo prazo.";
+
+function montarRec(a) {
+  const nome = a.symbol === "^BVSP" ? "Ibovespa" : a.symbol;
+  const linhas = [
+    `${nome} — ${a.nome}`,
+    `Preço: R$ ${a.price.toFixed(2)} (${a.chg >= 0 ? "+" : ""}${a.chg.toFixed(2)}% hoje)`,
+    "",
+    `Leitura automática: ${a.label}.`,
+    ...a.motivos.map(m => "• " + m),
+    "",
+    DISCLAIMER_REC,
+  ];
+  return linhas.join("\n");
+}
+
+function montarRanking(lista) {
+  if (!lista || !lista.length) return "Não consegui buscar as cotações agora — tenta de novo em instantes.";
+  const atrativos = lista.filter(a => a.score >= 1).slice(0, 4);
+  const cautela = lista.filter(a => a.score <= -1).slice(0, 3);
+  const fmt = a => `• ${a.symbol} (R$ ${a.price.toFixed(2)}, ${a.chg >= 0 ? "+" : ""}${a.chg.toFixed(2)}%) — ${a.motivos[0] || a.label}`;
+  const p = ["Leitura automática do mercado agora, por indicadores:", ""];
+  if (atrativos.length) { p.push("🟢 Mais atrativos hoje:"); atrativos.forEach(a => p.push(fmt(a))); p.push(""); }
+  if (cautela.length) { p.push("🔴 Pedem cautela:"); cautela.forEach(a => p.push(fmt(a))); p.push(""); }
+  if (!atrativos.length && !cautela.length) { p.push("Nada se destaca fortemente agora — sinais neutros. Manter aportes constantes e diversificar segue sendo o melhor caminho."); p.push(""); }
+  p.push(DISCLAIMER_REC);
+  return p.join("\n");
+}
+
 function Mentor({ C, user, lucro, ctx }) {
-  const suggestions = ["O que é ETF?", "O mercado caiu, devo vender?", "O que são juros compostos?", "Vale a pena comprar dólar?"];
+  const suggestions = ["O que está atrativo hoje?", "A PETR4 está boa?", "O que é ETF?", "O mercado caiu, devo vender?"];
   const [msgs, setMsgs] = useState([
     { role: "assistant", text: `Oi! Sou seu mentor. ${user.patrimonio > 0 ? `Já vi que você tem ${brl(user.patrimonio)} investidos e vem mantendo o ritmo há ${user.meses} ${user.meses === 1 ? "mês" : "meses"} — parabéns pela disciplina.` : "Vamos construir seu patrimônio juntos, um aporte de cada vez."} Pode me perguntar qualquer coisa, sem medo de parecer básico.` },
   ]);
@@ -820,10 +849,29 @@ function Mentor({ C, user, lucro, ctx }) {
     setMsgs(next);
     setLoading(true);
 
-    // Resposta automática a partir da base de conhecimento local (sem API/chave).
+    // 1) Recomendação/análise em tempo real (dados reais da B3)
+    try {
+      const ticker = detectarTicker(q);
+      const low = q.toLowerCase();
+      const pedeRec = /(recomend|vale a pena|devo comprar|o que comprar|o que investir|o que .*(bom|atrativ)|melhor.*(a[cç][aã]o|ativo)|dica|est[aá] bo[am])/.test(low);
+
+      if (ticker) {
+        const a = await analisar(ticker);
+        if (a) {
+          setMsgs(m => [...m, { role: "assistant", text: montarRec(a) }]);
+          setLoading(false); return;
+        }
+      }
+      if (pedeRec) {
+        const lista = await analisarLista();
+        setMsgs(m => [...m, { role: "assistant", text: montarRanking(lista) }]);
+        setLoading(false); return;
+      }
+    } catch { /* cai para a base educacional */ }
+
+    // 2) Base de conhecimento educacional (offline)
     const { resposta } = answerFromKb(q);
-    // Pequeno atraso só para dar a sensação de "digitando".
-    const delay = 350 + Math.min(900, resposta.length * 4);
+    const delay = 300 + Math.min(700, resposta.length * 3);
     setTimeout(() => {
       setMsgs(m => [...m, { role: "assistant", text: resposta }]);
       setLoading(false);

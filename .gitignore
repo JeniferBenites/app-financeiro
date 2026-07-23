@@ -18,3 +18,8 @@ android/capacitor-cordova-android-plugins/
 *.apk
 *.aab
 .gradle/
+
+# Assinatura Android (nao versionar)
+android/keystore.properties
+android/*.jks
+android/*.keystore

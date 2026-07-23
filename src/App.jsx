@@ -16,6 +16,7 @@ import {
   signOut, askMentor, currentMesRef,
 } from "./lib/api";
 import { isSupabaseConfigured } from "./lib/supabase";
+import { answerFromKb } from "./lib/mentorKb";
 
 /* ------------------------------------------------------------------ */
 /*  Tema (claro / escuro)                                             */
@@ -704,16 +705,14 @@ function Mentor({ C, user, lucro, ctx }) {
     setMsgs(next);
     setLoading(true);
 
-    try {
-      if (!isSupabaseConfigured) throw new Error("demo");
-      const payload = next.filter((m, idx) => !(idx === 0 && m.role === "assistant"));
-      const answer = await askMentor(payload, ctx);
-      setMsgs(m => [...m, { role: "assistant", text: answer || pickFallback(q) }]);
-    } catch {
-      setMsgs(m => [...m, { role: "assistant", text: pickFallback(q) }]);
-    } finally {
+    // Resposta automática a partir da base de conhecimento local (sem API/chave).
+    const { resposta } = answerFromKb(q);
+    // Pequeno atraso só para dar a sensação de "digitando".
+    const delay = 350 + Math.min(900, resposta.length * 4);
+    setTimeout(() => {
+      setMsgs(m => [...m, { role: "assistant", text: resposta }]);
       setLoading(false);
-    }
+    }, delay);
   }
 
   return (

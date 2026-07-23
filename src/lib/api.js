@@ -40,25 +40,30 @@ export function isValidCpf(cpf) {
   return dv1 === Number(d[9]) && dv2 === Number(d[10]);
 }
 
-function cpfToEmail(cpf) {
-  return `${onlyDigits(cpf)}@${CPF_EMAIL_DOMAIN}`;
+/* Busca o e-mail da conta a partir do CPF (função no banco). */
+export async function resolveEmailByCpf(cpf) {
+  const { data, error } = await supabase.rpc("email_by_cpf", { p_cpf: onlyDigits(cpf) });
+  if (error) throw error;
+  return data || null; // e-mail (string) ou null
 }
 
-/* ---- Auth (por CPF) ------------------------------------------------------- */
+/* ---- Auth: login por CPF, cadastro com e-mail (confirma a conta) --------- */
 export async function signIn(cpf, password) {
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: cpfToEmail(cpf),
-    password,
-  });
+  const email = await resolveEmailByCpf(cpf);
+  if (!email) throw new Error("cpf_nao_encontrado");
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data;
 }
 
-export async function signUp(cpf, password, nome) {
+export async function signUp({ nome, cpf, email, password }) {
   const { data, error } = await supabase.auth.signUp({
-    email: cpfToEmail(cpf),
+    email,
     password,
-    options: { data: { nome: nome || "Você", cpf: onlyDigits(cpf) } },
+    options: {
+      data: { nome: nome || "Você", cpf: onlyDigits(cpf) },
+      emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
+    },
   });
   if (error) throw error;
   return data;

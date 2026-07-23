@@ -1,11 +1,14 @@
 import React, { useState } from "react";
-import { Sparkles, User, Lock, IdCard, ArrowRight } from "lucide-react";
+import { Sparkles, User, Lock, IdCard, Mail, ArrowRight } from "lucide-react";
 import { signIn, signUp, isValidCpf, formatCpf, onlyDigits } from "../lib/api";
+
+const emailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
 export default function Auth() {
   const [mode, setMode] = useState("login"); // login | signup
   const [nome, setNome] = useState("");
   const [cpf, setCpf] = useState("");
+  const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -22,25 +25,26 @@ export default function Auth() {
       setMsg({ ok: false, t: "A senha precisa ter ao menos 6 caracteres." });
       return;
     }
-    if (mode === "signup" && nome.trim().length < 2) {
-      setMsg({ ok: false, t: "Digite seu nome de usuário." });
-      return;
+    if (mode === "signup") {
+      if (nome.trim().length < 2) {
+        setMsg({ ok: false, t: "Digite seu nome de usuário." });
+        return;
+      }
+      if (!emailOk(email.trim())) {
+        setMsg({ ok: false, t: "Digite um e-mail válido para confirmar a conta." });
+        return;
+      }
     }
 
     setLoading(true);
     try {
       if (mode === "signup") {
-        const { session } = await signUp(cpf, senha, nome.trim());
-        if (!session) {
-          // Confirmação de e-mail ligada — tenta login mesmo assim.
-          try {
-            await signIn(cpf, senha);
-          } catch {
-            setMsg({ ok: true, t: "Conta criada! Já pode entrar com seu CPF." });
-            setMode("login");
-          }
+        const { session } = await signUp({ nome: nome.trim(), cpf, email: email.trim(), password: senha });
+        if (session) {
+          return; // confirmação desligada: entra direto (onAuthStateChange)
         }
-        // com sessão, o onAuthStateChange redireciona.
+        setMsg({ ok: true, t: "Conta criada! Enviamos um link de confirmação para o seu e-mail. Confirme e depois entre com seu CPF." });
+        setMode("login");
       } else {
         await signIn(cpf, senha);
       }
@@ -124,6 +128,14 @@ export default function Auth() {
                 value={formatCpf(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value))} maxLength={14} />
             </div>
 
+            {mode === "signup" && (
+              <div style={field}>
+                <Mail size={18} color="rgba(255,255,255,0.85)" />
+                <input className="p10x-in" style={inputStyle} type="email" placeholder="E-mail (para confirmar a conta)"
+                  value={email} onChange={(e) => setEmail(e.target.value)} />
+              </div>
+            )}
+
             <div style={field}>
               <Lock size={18} color="rgba(255,255,255,0.85)" />
               <input className="p10x-in" style={inputStyle} type="password" placeholder="Senha"
@@ -159,9 +171,10 @@ export default function Auth() {
 
 function traduzErro(m = "") {
   const s = m.toLowerCase();
+  if (s.includes("cpf_nao_encontrado")) return "CPF não encontrado. Crie sua conta primeiro.";
   if (s.includes("invalid login")) return "CPF ou senha incorretos.";
-  if (s.includes("already registered") || s.includes("already been")) return "Este CPF já tem conta. Use 'Entrar'.";
-  if (s.includes("email not confirmed")) return "Cadastro criado, mas a confirmação de e-mail está ligada no servidor. Peça para desativá-la.";
+  if (s.includes("already registered") || s.includes("already been")) return "Este e-mail já tem conta. Use 'Entrar' com seu CPF.";
+  if (s.includes("email not confirmed")) return "Confirme seu e-mail antes de entrar — veja o link na sua caixa de entrada.";
   if (s.includes("password")) return "Senha muito curta (mínimo 6 caracteres).";
   return m || "Algo deu errado. Tente de novo.";
 }

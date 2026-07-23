@@ -5,18 +5,60 @@ export function currentMesRef(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-/* ---- Auth ---------------------------------------------------------------- */
-export async function signIn(email, password) {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+/* ---- CPF: validação e mapeamento para e-mail interno --------------------- */
+// O acesso é por CPF. Internamente convertemos o CPF em um e-mail
+// (CPF@patrimonio10x.app) que o usuário nunca vê — é só o identificador
+// que o Supabase Auth exige.
+const CPF_EMAIL_DOMAIN = "patrimonio10x.app";
+
+export function onlyDigits(s) {
+  return (s || "").replace(/\D/g, "");
+}
+
+export function formatCpf(s) {
+  const d = onlyDigits(s).slice(0, 11);
+  const p = [d.slice(0, 3), d.slice(3, 6), d.slice(6, 9), d.slice(9, 11)];
+  let out = p[0];
+  if (p[1]) out += "." + p[1];
+  if (p[2]) out += "." + p[2];
+  if (p[3]) out += "-" + p[3];
+  return out;
+}
+
+export function isValidCpf(cpf) {
+  const d = onlyDigits(cpf);
+  if (d.length !== 11) return false;
+  if (/^(\d)\1{10}$/.test(d)) return false; // todos iguais
+  const calc = (base, len) => {
+    let sum = 0;
+    for (let i = 0; i < len; i++) sum += Number(base[i]) * (len + 1 - i);
+    const r = (sum * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  const dv1 = calc(d, 9);
+  const dv2 = calc(d, 10);
+  return dv1 === Number(d[9]) && dv2 === Number(d[10]);
+}
+
+function cpfToEmail(cpf) {
+  return `${onlyDigits(cpf)}@${CPF_EMAIL_DOMAIN}`;
+}
+
+/* ---- Auth (por CPF) ------------------------------------------------------- */
+export async function signIn(cpf, password) {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: cpfToEmail(cpf),
+    password,
+  });
   if (error) throw error;
   return data;
 }
 
-export async function signUp(email, password, nome) {
+export async function signUp(cpf, password, nome) {
   const { data, error } = await supabase.auth.signUp({
-    email,
+    email: cpfToEmail(cpf),
     password,
-    options: { data: { nome: nome || "Você" } },
+    options: { data: { nome: nome || "Você", cpf: onlyDigits(cpf) } },
   });
   if (error) throw error;
   return data;

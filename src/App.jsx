@@ -9,7 +9,7 @@ import {
   PiggyBank, Award, Sun, Moon, Send, Info, ArrowLeft, Lock, Trophy,
   GraduationCap, HelpCircle, LogOut, RefreshCw, BarChart3,
 } from "lucide-react";
-import { fetchQuotes, fetchDolar, fetchOne, detectarTicker, analisar, analisarLista } from "./lib/market";
+import { fetchQuotes, fetchDolar, fetchOne, fetchDefesaIA, detectarTicker, analisar, analisarLista } from "./lib/market";
 import { useSession } from "./hooks/useSession";
 import Auth from "./screens/Auth.jsx";
 import {
@@ -540,7 +540,35 @@ function Dashboard({ C, user, lucro, rentab, goals, items, history }) {
   );
 }
 
+function MercadoRow({ C, q }) {
+  const up = (q.pct ?? 0) >= 0;
+  const isIndex = q.symbol === "^BVSP";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: `1px solid ${C.border}` }}>
+      <div style={{ width: 30, height: 30, borderRadius: 9, background: C.surfaceAlt, display: "grid", placeItems: "center", overflow: "hidden", flexShrink: 0 }}>
+        {q.logo
+          ? <img src={q.logo} alt="" width={30} height={30} style={{ objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+          : <span style={{ fontSize: 11, fontWeight: 800, color: C.primary }}>{q.symbol.replace("^", "").slice(0, 4)}</span>}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, fontSize: 13.5 }}>{isIndex ? "Ibovespa" : q.symbol}</div>
+        <div style={{ fontSize: 11.5, color: C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{q.nome}</div>
+      </div>
+      <div style={{ textAlign: "right", flexShrink: 0 }}>
+        <div style={{ fontWeight: 800, fontSize: 13.5, fontVariantNumeric: "tabular-nums" }}>
+          {isIndex ? Math.round(q.preco).toLocaleString("pt-BR") : "R$ " + q.preco.toFixed(2)}
+        </div>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: up ? C.positive : C.negative, display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end" }}>
+          {up ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+          {up ? "+" : ""}{(q.pct ?? 0).toFixed(2)}%
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MercadoB3({ C }) {
+  const [aba, setAba] = useState("b3");
   const [dolar, setDolar] = useState(null);
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -549,6 +577,11 @@ function MercadoB3({ C }) {
   const [busca, setBusca] = useState("");
   const [buscando, setBuscando] = useState(false);
   const [buscaMsg, setBuscaMsg] = useState("");
+  // Defesa & IA (carrega sob demanda)
+  const [di, setDi] = useState([]);
+  const [loadingDi, setLoadingDi] = useState(false);
+  const [erroDi, setErroDi] = useState(false);
+  const [diLoaded, setDiLoaded] = useState(false);
 
   async function buscar(e) {
     e?.preventDefault();
@@ -581,72 +614,85 @@ function MercadoB3({ C }) {
   }
   useEffect(() => { carregar(); }, []);
 
-  const lista = dolar ? [dolar, ...quotes] : quotes;
+  async function carregarDI() {
+    setLoadingDi(true);
+    setErroDi(false);
+    try {
+      const q = await fetchDefesaIA();
+      setDi(q);
+      setDiLoaded(true);
+      if (!q.length) setErroDi(true);
+    } catch {
+      setErroDi(true);
+    } finally {
+      setLoadingDi(false);
+    }
+  }
+  function irPara(t) {
+    setAba(t);
+    if (t === "di" && !diLoaded && !loadingDi) carregarDI();
+  }
+
+  const listaB3 = dolar ? [dolar, ...quotes] : quotes;
+  const tabBtn = (t, txt) => (
+    <button onClick={() => irPara(t)} style={{ flex: 1, padding: "8px 0", borderRadius: 9, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, background: aba === t ? C.primary : "transparent", color: aba === t ? "#fff" : C.textMut }}>{txt}</button>
+  );
 
   return (
     <Card C={C} style={{ padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <BarChart3 size={17} color={C.primary} />
-          <span style={{ fontWeight: 700, fontSize: 14.5 }}>Mercado — B3</span>
+          <span style={{ fontWeight: 700, fontSize: 14.5 }}>Mercado</span>
         </div>
-        <button onClick={carregar} disabled={loading} title="Atualizar" style={{ background: C.surfaceAlt, border: "none", borderRadius: 10, width: 30, height: 30, display: "grid", placeItems: "center", color: C.textMut, cursor: "pointer" }}>
-          <RefreshCw size={14} style={loading ? { animation: "none", opacity: 0.5 } : {}} />
+        <button onClick={() => (aba === "b3" ? carregar() : carregarDI())} disabled={loading || loadingDi} title="Atualizar" style={{ background: C.surfaceAlt, border: "none", borderRadius: 10, width: 30, height: 30, display: "grid", placeItems: "center", color: C.textMut, cursor: "pointer" }}>
+          <RefreshCw size={14} style={(loading || loadingDi) ? { opacity: 0.5 } : {}} />
         </button>
       </div>
-      <div style={{ fontSize: 11.5, color: C.textMut, marginBottom: 12 }}>
-        Cotações do dia {hora && `· atualizado ${hora}`} · informativo, pode ter atraso
+
+      <div style={{ display: "flex", gap: 6, background: C.surfaceAlt, borderRadius: 12, padding: 4, marginBottom: 12 }}>
+        {tabBtn("b3", "Ações B3")}
+        {tabBtn("di", "Defesa & IA")}
       </div>
 
-      <form onSubmit={buscar} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar ação (ex.: PETR4, VALE3)"
-          style={{ flex: 1, background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 13px", fontSize: 13.5, color: C.text, outline: "none" }} />
-        <button type="submit" disabled={buscando} style={{ background: C.primary, color: "#fff", border: "none", borderRadius: 12, padding: "0 16px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: buscando ? 0.7 : 1 }}>
-          {buscando ? "…" : "Buscar"}
-        </button>
-      </form>
-      {buscaMsg && <div style={{ fontSize: 12, color: C.negative, marginTop: -6, marginBottom: 10 }}>{buscaMsg}</div>}
-
-      {loading && <div style={{ color: C.textMut, fontSize: 13, padding: "8px 0" }}>Carregando cotações…</div>}
-
-      {!loading && erro && (
-        <div style={{ color: C.textMut, fontSize: 13, padding: "8px 0" }}>
-          Não foi possível carregar as cotações agora. Toque em atualizar para tentar de novo.
-        </div>
+      {aba === "b3" && (
+        <>
+          <form onSubmit={buscar} style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar ação (ex.: PETR4, VALE3)"
+              style={{ flex: 1, background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 13px", fontSize: 13.5, color: C.text, outline: "none" }} />
+            <button type="submit" disabled={buscando} style={{ background: C.primary, color: "#fff", border: "none", borderRadius: 12, padding: "0 16px", fontSize: 13.5, fontWeight: 700, cursor: "pointer", opacity: buscando ? 0.7 : 1 }}>
+              {buscando ? "…" : "Buscar"}
+            </button>
+          </form>
+          {buscaMsg && <div style={{ fontSize: 12, color: C.negative, marginTop: -6, marginBottom: 10 }}>{buscaMsg}</div>}
+          {loading && <div style={{ color: C.textMut, fontSize: 13, padding: "8px 0" }}>Carregando cotações…</div>}
+          {!loading && erro && <div style={{ color: C.textMut, fontSize: 13, padding: "8px 0" }}>Não foi possível carregar agora. Toque em atualizar.</div>}
+          {!loading && !erro && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {listaB3.map((q) => <MercadoRow key={q.symbol} C={C} q={q} />)}
+            </div>
+          )}
+        </>
       )}
 
-      {!loading && !erro && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {lista.map((q) => {
-            const up = (q.pct ?? 0) >= 0;
-            return (
-              <div key={q.symbol} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: `1px solid ${C.border}` }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: C.surfaceAlt, display: "grid", placeItems: "center", overflow: "hidden", flexShrink: 0 }}>
-                  {q.logo
-                    ? <img src={q.logo} alt="" width={30} height={30} style={{ objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
-                    : <span style={{ fontSize: 11, fontWeight: 800, color: C.primary }}>{q.symbol.replace("^", "").slice(0, 4)}</span>}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>{q.symbol === "^BVSP" ? "Ibovespa" : q.symbol}</div>
-                  <div style={{ fontSize: 11.5, color: C.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{q.nome}</div>
-                </div>
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontWeight: 800, fontSize: 13.5, fontVariantNumeric: "tabular-nums" }}>
-                    {q.symbol === "USD" ? "R$ " + q.preco.toFixed(2) : q.symbol === "^BVSP" ? Math.round(q.preco).toLocaleString("pt-BR") : "R$ " + q.preco.toFixed(2)}
-                  </div>
-                  <div style={{ fontSize: 11.5, fontWeight: 700, color: up ? C.positive : C.negative, display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end" }}>
-                    {up ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                    {up ? "+" : ""}{(q.pct ?? 0).toFixed(2)}%
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          <div style={{ fontSize: 10.5, color: C.textMut, marginTop: 8, lineHeight: 1.4 }}>
-            Fonte: brapi.dev / AwesomeAPI. Conteúdo educacional, não é recomendação.
+      {aba === "di" && (
+        <>
+          <div style={{ fontSize: 11.5, color: C.textMut, marginBottom: 10, lineHeight: 1.4 }}>
+            Defesa/aeroespacial e IA — Embraer (Brasil) e gigantes globais via BDR (recibos negociados na B3).
           </div>
-        </div>
+          {loadingDi && <div style={{ color: C.textMut, fontSize: 13, padding: "8px 0" }}>Carregando…</div>}
+          {!loadingDi && erroDi && <div style={{ color: C.textMut, fontSize: 13, padding: "8px 0" }}>Não foi possível carregar agora. Toque em atualizar.</div>}
+          {!loadingDi && !erroDi && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {di.map((q) => <MercadoRow key={q.symbol} C={C} q={q} />)}
+            </div>
+          )}
+        </>
       )}
+
+      <div style={{ fontSize: 10.5, color: C.textMut, marginTop: 10, lineHeight: 1.4 }}>
+        Fonte: brapi.dev / AwesomeAPI · cotações do dia {hora && `· ${hora}`} · pode ter atraso. Conteúdo educacional, não é recomendação.
+      </div>
     </Card>
   );
 }

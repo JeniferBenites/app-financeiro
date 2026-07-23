@@ -17,6 +17,22 @@ export const TICKERS_FULL = [
 ];
 export const TICKERS_FREE = ["PETR4", "VALE3", "ITUB4", "ABEV3", "BBDC4", "MGLU3"];
 
+// Defesa/aeroespacial e IA/tecnologia — Embraer (BR) + BDRs de gigantes globais.
+export const TICKERS_DEFESA_IA = [
+  "EMBR3",  // Embraer (defesa/aviação, Brasil)
+  "LMTB34", // Lockheed Martin
+  "RYTT34", // RTX (Raytheon)
+  "NOCG34", // Northrop Grumman
+  "GDBR34", // General Dynamics
+  "BOEI34", // Boeing
+  "NVDC34", // NVIDIA
+  "MSFT34", // Microsoft
+  "GOGL34", // Alphabet (Google)
+  "A1MD34", // AMD
+  "P2LT34", // Palantir
+  "TSLA34", // Tesla
+];
+
 const hasToken = Boolean(TOKEN);
 
 function mapQuote(q) {
@@ -65,6 +81,12 @@ export async function fetchOne(symbol) {
 export async function fetchQuotes() {
   const tickers = hasToken ? TICKERS_FULL : TICKERS_FREE;
   const results = await Promise.all(tickers.map(fetchOne));
+  return results.filter(Boolean);
+}
+
+/** Busca a cesta de Defesa & IA (via BDRs + Embraer). */
+export async function fetchDefesaIA() {
+  const results = await Promise.all(TICKERS_DEFESA_IA.map(fetchOne));
   return results.filter(Boolean);
 }
 

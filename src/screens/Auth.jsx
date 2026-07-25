@@ -29,17 +29,9 @@ export default function Auth() {
 
     setLoading(true);
     try {
-      if (mode === "signup") {
-        const { session } = await signUp({ nome: nome.trim(), cpf, password: senha });
-        if (session) {
-          return; // entra direto (onAuthStateChange)
-        }
-        // Sem sessão: a confirmação de e-mail ainda está ligada no projeto.
-        // Tenta entrar mesmo assim para dar um erro claro em vez de tela parada.
-        await signIn(cpf, senha);
-      } else {
-        await signIn(cpf, senha);
-      }
+      // No cadastro, signUp cria a conta e já entra (onAuthStateChange assume).
+      if (mode === "signup") await signUp({ nome: nome.trim(), cpf, password: senha });
+      else await signIn(cpf, senha);
     } catch (err) {
       setMsg({ ok: false, t: traduzErro(err?.message) });
     } finally {
@@ -155,10 +147,19 @@ export default function Auth() {
 
 function traduzErro(m = "") {
   const s = m.toLowerCase();
+  if (s.includes("cpf_ja_cadastrado")) return "Este CPF já tem conta. Toque em 'Entrar'.";
+  if (s.includes("cpf_invalido")) return "CPF inválido. Confira os números.";
+  if (s.includes("senha_curta")) return "A senha precisa ter ao menos 6 caracteres.";
   if (s.includes("cpf_nao_encontrado")) return "CPF não encontrado. Crie sua conta primeiro.";
   if (s.includes("invalid login")) return "CPF ou senha incorretos.";
-  if (s.includes("already registered") || s.includes("already been")) return "Este CPF já tem conta. Use 'Entrar'.";
-  if (s.includes("email not confirmed")) return "Confirmação de e-mail ainda está ligada no Supabase. Desligue em Authentication > Sign In / Providers > Confirm email.";
+  if (s.includes("already registered") || s.includes("already been")) return "Este CPF já tem conta. Toque em 'Entrar'.";
+  // Cadastro direto recusado pelo Supabase (domínio interno sem MX): só acontece
+  // se a Edge Function 'signup-cpf' não estiver publicada.
+  if (s.includes("email address") && s.includes("invalid")) {
+    return "Não foi possível criar a conta agora. Publique a função signup-cpf (npx supabase functions deploy signup-cpf) e tente de novo.";
+  }
+  if (s.includes("email not confirmed")) return "Conta criada, mas ainda não confirmada. Tente entrar de novo em instantes.";
   if (s.includes("password")) return "Senha muito curta (mínimo 6 caracteres).";
+  if (s.includes("failed to fetch") || s.includes("network")) return "Sem conexão. Verifique sua internet e tente de novo.";
   return m || "Algo deu errado. Tente de novo.";
 }

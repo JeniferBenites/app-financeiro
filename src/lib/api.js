@@ -63,14 +63,62 @@ export async function signIn(cpf, password) {
   return data;
 }
 
+/**
+ * Cria a conta e já entra.
+ *
+ * O cadastro público do Supabase recusa o e-mail interno
+ * (<cpf>@patrimonio10x.app) porque o domínio não tem MX — dá
+ * "Email address is invalid". Por isso a conta é criada pela Edge Function
+ * 'signup-cpf', que usa a chave de serviço no servidor e já marca o e-mail
+ * como confirmado. Depois o login normal acontece aqui.
+ *
+ * Se a função ainda não estiver publicada, tenta o cadastro direto (que
+ * funciona em projetos sem essa validação).
+ */
 export async function signUp({ nome, cpf, password }) {
-  const { data, error } = await supabase.auth.signUp({
-    email: cpfToEmail(cpf),
-    password,
-    options: { data: { nome: nome || "Você", cpf: onlyDigits(cpf) } },
-  });
-  if (error) throw error;
-  return data;
+  const payload = { cpf: onlyDigits(cpf), nome: nome || "Você", senha: password };
+
+  let criadaNoServidor = false;
+  try {
+    const { data, error } = await supabase.functions.invoke("signup-cpf", { body: payload });
+    if (error) {
+      // A função responde 409 com { erro: "cpf_ja_cadastrado" }.
+      const detalhe = await lerErroDaFuncao(error);
+      if (detalhe) throw new Error(detalhe);
+      throw error;
+    }
+    if (data?.erro) throw new Error(data.erro);
+    criadaNoServidor = !!data?.ok;
+  } catch (e) {
+    // Erro de regra (CPF já existe, senha curta) sobe para a tela.
+    if (ERROS_DE_REGRA.some((k) => String(e?.message || "").includes(k))) throw e;
+    // Função ausente ou fora do ar: tenta o caminho direto.
+    criadaNoServidor = false;
+  }
+
+  if (!criadaNoServidor) {
+    const { error } = await supabase.auth.signUp({
+      email: cpfToEmail(cpf),
+      password,
+      options: { data: { nome: nome || "Você", cpf: onlyDigits(cpf) } },
+    });
+    if (error) throw error;
+  }
+
+  // Conta criada já confirmada: entra direto.
+  return await signIn(cpf, password);
+}
+
+const ERROS_DE_REGRA = ["cpf_ja_cadastrado", "cpf_invalido", "senha_curta"];
+
+/* A mensagem útil da Edge Function vem no corpo da resposta, não no error. */
+async function lerErroDaFuncao(error) {
+  try {
+    const corpo = await error?.context?.json?.();
+    return corpo?.erro || null;
+  } catch {
+    return null;
+  }
 }
 
 export async function signOut() {

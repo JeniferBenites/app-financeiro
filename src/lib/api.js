@@ -66,50 +66,81 @@ export async function signIn(cpf, password) {
 /**
  * Cria a conta e já entra.
  *
- * O cadastro público do Supabase recusa o e-mail interno
- * (<cpf>@patrimonio10x.app) porque o domínio não tem MX — dá
- * "Email address is invalid". Por isso a conta é criada pela Edge Function
- * 'signup-cpf', que usa a chave de serviço no servidor e já marca o e-mail
- * como confirmado. Depois o login normal acontece aqui.
+ * O e-mail de recuperação é opcional e serve só para recuperar a senha depois
+ * (fica no metadata do usuário, não é usado para login).
  *
- * Se a função ainda não estiver publicada, tenta o cadastro direto (que
- * funciona em projetos sem essa validação).
+ * Caminho normal: cadastro público do Supabase. Alguns projetos recusam o
+ * e-mail interno (<cpf>@patrimonio10x.app) porque o domínio não tem MX; nesse
+ * caso a conta é criada pela Edge Function 'signup-cpf', no servidor.
  */
-export async function signUp({ nome, cpf, password }) {
-  const payload = { cpf: onlyDigits(cpf), nome: nome || "Você", senha: password };
+export async function signUp({ nome, cpf, password, emailRecuperacao }) {
+  const meta = { nome: nome || "Você", cpf: onlyDigits(cpf) };
+  const rec = normalizaEmail(emailRecuperacao);
+  if (rec) meta.email_recuperacao = rec;
 
-  let criadaNoServidor = false;
-  try {
-    const { data, error } = await supabase.functions.invoke("signup-cpf", { body: payload });
-    if (error) {
+  const { error } = await supabase.auth.signUp({
+    email: cpfToEmail(cpf), password, options: { data: meta },
+  });
+
+  if (error) {
+    const recusouEmail = /email address/i.test(error.message || "");
+    if (!recusouEmail) throw error;
+
+    const { data, error: erroFn } = await supabase.functions.invoke("signup-cpf", {
+      body: { cpf: onlyDigits(cpf), nome: meta.nome, senha: password, email_recuperacao: rec },
+    });
+    if (erroFn) {
       // A função responde 409 com { erro: "cpf_ja_cadastrado" }.
-      const detalhe = await lerErroDaFuncao(error);
-      if (detalhe) throw new Error(detalhe);
-      throw error;
+      const detalhe = await lerErroDaFuncao(erroFn);
+      throw new Error(detalhe || erroFn.message);
     }
     if (data?.erro) throw new Error(data.erro);
-    criadaNoServidor = !!data?.ok;
-  } catch (e) {
-    // Erro de regra (CPF já existe, senha curta) sobe para a tela.
-    if (ERROS_DE_REGRA.some((k) => String(e?.message || "").includes(k))) throw e;
-    // Função ausente ou fora do ar: tenta o caminho direto.
-    criadaNoServidor = false;
   }
 
-  if (!criadaNoServidor) {
-    const { error } = await supabase.auth.signUp({
-      email: cpfToEmail(cpf),
-      password,
-      options: { data: { nome: nome || "Você", cpf: onlyDigits(cpf) } },
-    });
-    if (error) throw error;
-  }
-
-  // Conta criada já confirmada: entra direto.
   return await signIn(cpf, password);
 }
 
-const ERROS_DE_REGRA = ["cpf_ja_cadastrado", "cpf_invalido", "senha_curta"];
+/* ---- Senha: trocar logada e recuperar esquecida --------------------------- */
+
+const normalizaEmail = (e) => (e || "").trim().toLowerCase() || null;
+
+/** Troca a senha de quem já está logado. */
+export async function trocarSenha(novaSenha) {
+  if (String(novaSenha).length < 6) throw new Error("senha_curta");
+  const { error } = await supabase.auth.updateUser({ password: novaSenha });
+  if (error) throw error;
+}
+
+/** E-mail de recuperação salvo na conta (ou null). */
+export function emailRecuperacaoDaSessao(session) {
+  return session?.user?.user_metadata?.email_recuperacao || null;
+}
+
+/** Cadastra/atualiza o e-mail de recuperação de quem está logado. */
+export async function salvarEmailRecuperacao(email) {
+  const rec = normalizaEmail(email);
+  if (rec && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rec)) throw new Error("email_invalido");
+  const { error } = await supabase.auth.updateUser({ data: { email_recuperacao: rec } });
+  if (error) throw error;
+  return rec;
+}
+
+/**
+ * Recupera a senha esquecida: exige CPF + o e-mail de recuperação cadastrado.
+ * A troca é feita pela Edge Function 'recuperar-senha' (chave de serviço fica
+ * no servidor); o app nunca consegue trocar a senha de outra pessoa.
+ */
+export async function recuperarSenha({ cpf, email, novaSenha }) {
+  const { data, error } = await supabase.functions.invoke("recuperar-senha", {
+    body: { cpf: onlyDigits(cpf), email: normalizaEmail(email), nova_senha: novaSenha },
+  });
+  if (error) {
+    const detalhe = await lerErroDaFuncao(error);
+    throw new Error(detalhe || error.message);
+  }
+  if (data?.erro) throw new Error(data.erro);
+  return true;
+}
 
 /* A mensagem útil da Edge Function vem no corpo da resposta, não no error. */
 async function lerErroDaFuncao(error) {

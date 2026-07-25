@@ -7,7 +7,7 @@ import {
   Home, Target, MessageCircle, BookOpen, Calculator as CalcIcon,
   TrendingUp, TrendingDown, Flame, Check, ChevronRight, Sparkles, Shield, Wallet,
   PiggyBank, Award, Sun, Moon, Send, Info, ArrowLeft, Lock, Trophy,
-  GraduationCap, HelpCircle, LogOut, RefreshCw, BarChart3,
+  GraduationCap, HelpCircle, RefreshCw, BarChart3, UserCog,
 } from "lucide-react";
 import { fetchQuotes, fetchDolar, fetchOne, fetchDefesaIA, detectarTicker, analisar, analisarLista } from "./lib/market";
 import { useSession } from "./hooks/useSession";
@@ -16,6 +16,7 @@ import Auth from "./screens/Auth.jsx";
 import {
   loadUserState, togglePlanItem, completeMonthlyPlan, saveOnboarding,
   signOut, askMentor, currentMesRef, addXp,
+  trocarSenha, salvarEmailRecuperacao, emailRecuperacaoDaSessao, formatCpf,
 } from "./lib/api";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { answerFromKb } from "./lib/mentorKb";
@@ -238,6 +239,7 @@ function MainApp({ C, dark, setDark, demo, session, state, onRefresh }) {
   const [booted, setBooted] = useState(demo ? false : true); // onboarding
   const [tab, setTab] = useState("inicio");
   const [moduloAberto, setModuloAberto] = useState(null); // slug do módulo em leitura
+  const [contaAberta, setContaAberta] = useState(false);
 
   // ---- Derivar o "user" e coleções a partir do estado real ou demo ----
   const demoUser = { nome: "Você", instituicao: "Nubank", aporte: 2000, risco: "moderado",
@@ -348,7 +350,8 @@ function MainApp({ C, dark, setDark, demo, session, state, onRefresh }) {
   return (
     <div style={shell}>
       <Header C={C} dark={dark} setDark={setDark} nivel={nivel} xpNivel={xpNivel}
-        streak={user.meses} canLogout={!demo && !!session} />
+        streak={user.meses} canLogout={!demo && !!session}
+        onConta={() => setContaAberta(true)} />
 
       <div style={{ padding: "0 18px" }}>
         {tab === "inicio" && <Dashboard C={C} user={user} lucro={lucro} rentab={rentab} goals={goals} items={items} history={history} />}
@@ -362,6 +365,10 @@ function MainApp({ C, dark, setDark, demo, session, state, onRefresh }) {
         <MonthlyCard C={C} items={items} setItems={setItems} allDone={allDone}
           planConcluido={planConcluido} xp={xp} setXp={setXp}
           onToggle={persistToggle} onComplete={persistComplete} demo={demo} />
+      )}
+
+      {contaAberta && session && (
+        <ContaModal C={C} session={session} onClose={() => setContaAberta(false)} />
       )}
 
       {moduloAberto && moduloPorSlug(moduloAberto) && (
@@ -421,7 +428,98 @@ function Term({ C, label, tip }) {
   );
 }
 
-function Header({ C, dark, setDark, nivel, xpNivel, streak, canLogout }) {
+/* ------------------------------------------------------------------ */
+/*  Minha conta — trocar senha e e-mail de recuperação                 */
+/* ------------------------------------------------------------------ */
+function ContaModal({ C, session, onClose }) {
+  const [email, setEmail] = useState(emailRecuperacaoDaSessao(session) || "");
+  const [senha, setSenha] = useState("");
+  const [senha2, setSenha2] = useState("");
+  const [msg, setMsg] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+
+  const cpf = session?.user?.user_metadata?.cpf;
+  const nome = session?.user?.user_metadata?.nome || "Você";
+
+  const campo = { width: "100%", background: C.surfaceAlt, border: `1px solid ${C.border}`,
+    borderRadius: 13, padding: "12px 14px", fontSize: 14.5, color: C.text, outline: "none" };
+  const botao = (bg, cor) => ({ padding: "12px 0", borderRadius: 13, border: "none", cursor: "pointer",
+    background: bg, color: cor, fontWeight: 700, fontSize: 14, width: "100%" });
+
+  async function salvarEmail() {
+    setMsg(null); setSalvando(true);
+    try {
+      await salvarEmailRecuperacao(email);
+      setMsg({ ok: true, t: email.trim() ? "E-mail de recuperação salvo." : "E-mail de recuperação removido." });
+    } catch (e) {
+      setMsg({ ok: false, t: e?.message === "email_invalido" ? "E-mail inválido." : "Não deu para salvar. Tente de novo." });
+    } finally { setSalvando(false); }
+  }
+
+  async function salvarSenha() {
+    setMsg(null);
+    if (senha.length < 6) { setMsg({ ok: false, t: "A senha precisa ter ao menos 6 caracteres." }); return; }
+    if (senha !== senha2) { setMsg({ ok: false, t: "As duas senhas não são iguais." }); return; }
+    setSalvando(true);
+    try {
+      await trocarSenha(senha);
+      setSenha(""); setSenha2("");
+      setMsg({ ok: true, t: "Senha trocada." });
+    } catch (e) {
+      setMsg({ ok: false, t: "Não deu para trocar a senha. Tente de novo." });
+    } finally { setSalvando(false); }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 65,
+      display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.surface, width: "100%", maxWidth: 480,
+        borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 24, maxHeight: "88vh", overflowY: "auto",
+        fontFamily: "'Inter',system-ui,sans-serif", color: C.text }}>
+        <div style={{ width: 40, height: 4, borderRadius: 4, background: C.border, margin: "0 auto 18px" }} />
+
+        <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: -0.5 }}>Minha conta</div>
+        <div style={{ fontSize: 13, color: C.textMut, marginTop: 4, marginBottom: 18 }}>
+          {nome}{cpf ? ` · CPF ${formatCpf(cpf)}` : ""}
+        </div>
+
+        {msg && (
+          <div style={{ fontSize: 13, fontWeight: 600, borderRadius: 11, padding: "10px 12px", marginBottom: 14,
+            color: msg.ok ? C.positive : C.negative,
+            background: msg.ok ? C.primarySoft : "rgba(229,72,77,.12)" }}>{msg.t}</div>
+        )}
+
+        <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 6 }}>E-mail para recuperar senha</div>
+        <div style={{ fontSize: 12.5, color: C.textMut, marginBottom: 10, lineHeight: 1.45 }}>
+          Sem ele, não há como recuperar a senha se você esquecer.
+        </div>
+        <input style={campo} type="email" inputMode="email" placeholder="seu@email.com"
+          value={email} onChange={(e) => setEmail(e.target.value)} />
+        <button onClick={salvarEmail} disabled={salvando} style={{ ...botao(C.surfaceAlt, C.text), marginTop: 9 }}>
+          Salvar e-mail
+        </button>
+
+        <div style={{ height: 1, background: C.border, margin: "22px 0" }} />
+
+        <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 10 }}>Trocar senha</div>
+        <input style={{ ...campo, marginBottom: 9 }} type="password" placeholder="Nova senha"
+          value={senha} onChange={(e) => setSenha(e.target.value)} />
+        <input style={campo} type="password" placeholder="Repita a nova senha"
+          value={senha2} onChange={(e) => setSenha2(e.target.value)} />
+        <button onClick={salvarSenha} disabled={salvando} style={{ ...botao(C.primary, "#fff"), marginTop: 9 }}>
+          Trocar senha
+        </button>
+
+        <div style={{ height: 1, background: C.border, margin: "22px 0" }} />
+
+        <button onClick={() => signOut()} style={botao(C.surfaceAlt, C.negative)}>Sair da conta</button>
+        <button onClick={onClose} style={{ ...botao("transparent", C.textMut), marginTop: 6 }}>Fechar</button>
+      </div>
+    </div>
+  );
+}
+
+function Header({ C, dark, setDark, nivel, xpNivel, streak, canLogout, onConta }) {
   return (
     <div style={{ padding: "16px 18px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -442,8 +540,8 @@ function Header({ C, dark, setDark, nivel, xpNivel, streak, canLogout }) {
           {dark ? <Sun size={15} /> : <Moon size={15} />}
         </button>
         {canLogout && (
-          <button onClick={() => signOut()} title="Sair" style={{ background: C.surfaceAlt, border: "none", borderRadius: 20, width: 30, height: 30, display: "grid", placeItems: "center", color: C.textMut, cursor: "pointer" }}>
-            <LogOut size={15} />
+          <button onClick={onConta} title="Minha conta" style={{ background: C.surfaceAlt, border: "none", borderRadius: 20, width: 30, height: 30, display: "grid", placeItems: "center", color: C.textMut, cursor: "pointer" }}>
+            <UserCog size={15} />
           </button>
         )}
       </div>

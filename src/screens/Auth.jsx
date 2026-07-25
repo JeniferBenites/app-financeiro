@@ -1,12 +1,15 @@
 import React, { useState } from "react";
-import { Sparkles, User, Lock, IdCard, ArrowRight } from "lucide-react";
-import { signIn, signUp, isValidCpf, formatCpf, onlyDigits } from "../lib/api";
+import { Sparkles, User, Lock, IdCard, ArrowRight, Mail, KeyRound } from "lucide-react";
+import { signIn, signUp, recuperarSenha, isValidCpf, formatCpf, onlyDigits } from "../lib/api";
+
+const emailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
 export default function Auth() {
-  const [mode, setMode] = useState("login"); // login | signup
+  const [mode, setMode] = useState("login"); // login | signup | recuperar
   const [nome, setNome] = useState("");
   const [cpf, setCpf] = useState("");
   const [senha, setSenha] = useState("");
+  const [email, setEmail] = useState("");   // recuperação (opcional no cadastro)
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState(null);
 
@@ -19,24 +22,47 @@ export default function Auth() {
       return;
     }
     if (senha.length < 6) {
-      setMsg({ ok: false, t: "A senha precisa ter ao menos 6 caracteres." });
+      setMsg({ ok: false, t: mode === "recuperar"
+        ? "A nova senha precisa ter ao menos 6 caracteres."
+        : "A senha precisa ter ao menos 6 caracteres." });
       return;
     }
     if (mode === "signup" && nome.trim().length < 2) {
       setMsg({ ok: false, t: "Digite seu nome de usuário." });
       return;
     }
+    if (mode === "signup" && email.trim() && !emailOk(email)) {
+      setMsg({ ok: false, t: "E-mail inválido. Deixe em branco se não quiser informar." });
+      return;
+    }
+    if (mode === "recuperar" && !emailOk(email)) {
+      setMsg({ ok: false, t: "Digite o e-mail que você cadastrou." });
+      return;
+    }
 
     setLoading(true);
     try {
-      // No cadastro, signUp cria a conta e já entra (onAuthStateChange assume).
-      if (mode === "signup") await signUp({ nome: nome.trim(), cpf, password: senha });
-      else await signIn(cpf, senha);
+      if (mode === "signup") {
+        // Cria a conta e já entra (onAuthStateChange assume).
+        await signUp({ nome: nome.trim(), cpf, password: senha, emailRecuperacao: email });
+      } else if (mode === "recuperar") {
+        await recuperarSenha({ cpf, email, novaSenha: senha });
+        await signIn(cpf, senha); // entra já com a senha nova
+      } else {
+        await signIn(cpf, senha);
+      }
     } catch (err) {
       setMsg({ ok: false, t: traduzErro(err?.message) });
     } finally {
       setLoading(false);
     }
+  }
+
+  function trocaModo(m) {
+    setMode(m);
+    setMsg(null);
+    setSenha("");
+    if (m !== "recuperar") setEmail("");
   }
 
   const glass = {
@@ -87,7 +113,7 @@ export default function Auth() {
         <div style={{ ...glass, borderRadius: 26, padding: 24 }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 20, background: "rgba(255,255,255,0.12)", borderRadius: 14, padding: 5 }}>
             {["login", "signup"].map((m) => (
-              <button key={m} onClick={() => { setMode(m); setMsg(null); }} style={{
+              <button key={m} onClick={() => trocaModo(m)} style={{
                 flex: 1, padding: "10px 0", borderRadius: 10, border: "none", cursor: "pointer",
                 fontSize: 14, fontWeight: 700,
                 background: mode === m ? "rgba(255,255,255,0.9)" : "transparent",
@@ -97,6 +123,14 @@ export default function Auth() {
               </button>
             ))}
           </div>
+
+          {mode === "recuperar" && (
+            <div style={{ color: "#fff", fontSize: 13.5, lineHeight: 1.5, marginBottom: 14,
+              background: "rgba(255,255,255,0.12)", borderRadius: 12, padding: "11px 13px" }}>
+              <b>Recuperar senha</b><br />
+              Informe seu CPF, o e-mail que você cadastrou e a nova senha.
+            </div>
+          )}
 
           <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {mode === "signup" && (
@@ -112,11 +146,39 @@ export default function Auth() {
                 value={formatCpf(cpf)} onChange={(e) => setCpf(onlyDigits(e.target.value))} maxLength={14} />
             </div>
 
+            {(mode === "signup" || mode === "recuperar") && (
+              <div style={field}>
+                <Mail size={18} color="rgba(255,255,255,0.85)" />
+                <input className="p10x-in" style={inputStyle} type="email" inputMode="email"
+                  placeholder={mode === "signup" ? "E-mail para recuperar senha (opcional)" : "E-mail cadastrado"}
+                  value={email} onChange={(e) => setEmail(e.target.value)} />
+              </div>
+            )}
+
             <div style={field}>
               <Lock size={18} color="rgba(255,255,255,0.85)" />
-              <input className="p10x-in" style={inputStyle} type="password" placeholder="Senha"
+              <input className="p10x-in" style={inputStyle} type="password"
+                placeholder={mode === "recuperar" ? "Nova senha" : "Senha"}
                 value={senha} onChange={(e) => setSenha(e.target.value)} />
             </div>
+
+            {mode === "login" && (
+              <button type="button" onClick={() => trocaModo("recuperar")} style={{
+                alignSelf: "flex-start", background: "none", border: "none", padding: 0, cursor: "pointer",
+                color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: 600, textDecoration: "underline",
+                display: "flex", alignItems: "center", gap: 5,
+              }}>
+                <KeyRound size={14} /> Esqueci minha senha
+              </button>
+            )}
+            {mode === "recuperar" && (
+              <button type="button" onClick={() => trocaModo("login")} style={{
+                alignSelf: "flex-start", background: "none", border: "none", padding: 0, cursor: "pointer",
+                color: "rgba(255,255,255,0.9)", fontSize: 13, fontWeight: 600, textDecoration: "underline",
+              }}>
+                Voltar para o login
+              </button>
+            )}
 
             {msg && (
               <div style={{ fontSize: 13, fontWeight: 600, color: msg.ok ? "#D9FBEF" : "#FFD9DB",
@@ -130,7 +192,10 @@ export default function Auth() {
               display: "flex", justifyContent: "center", alignItems: "center", gap: 8,
               opacity: loading ? 0.75 : 1,
             }}>
-              {loading ? "Aguarde…" : mode === "login" ? "Entrar" : "Criar minha conta"}
+              {loading ? "Aguarde…"
+                : mode === "login" ? "Entrar"
+                : mode === "recuperar" ? "Trocar minha senha"
+                : "Criar minha conta"}
               {!loading && <ArrowRight size={18} />}
             </button>
           </form>
@@ -148,6 +213,10 @@ export default function Auth() {
 function traduzErro(m = "") {
   const s = m.toLowerCase();
   if (s.includes("cpf_ja_cadastrado")) return "Este CPF já tem conta. Toque em 'Entrar'.";
+  if (s.includes("sem_email_recuperacao")) return "Esta conta não tem e-mail de recuperação cadastrado. Não é possível recuperar sozinha — fale com o suporte.";
+  if (s.includes("email_nao_confere")) return "Esse e-mail não é o cadastrado nesta conta.";
+  if (s.includes("email_obrigatorio")) return "Informe o e-mail cadastrado.";
+  if (s.includes("email_invalido")) return "E-mail inválido.";
   if (s.includes("cpf_invalido")) return "CPF inválido. Confira os números.";
   if (s.includes("senha_curta")) return "A senha precisa ter ao menos 6 caracteres.";
   if (s.includes("cpf_nao_encontrado")) return "CPF não encontrado. Crie sua conta primeiro.";

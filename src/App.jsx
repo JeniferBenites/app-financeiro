@@ -14,10 +14,15 @@ import { useSession } from "./hooks/useSession";
 import Auth from "./screens/Auth.jsx";
 import {
   loadUserState, togglePlanItem, completeMonthlyPlan, saveOnboarding,
-  signOut, askMentor, currentMesRef,
+  signOut, askMentor, currentMesRef, addXp,
 } from "./lib/api";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { answerFromKb } from "./lib/mentorKb";
+import {
+  CURRICULO, TOTAL_MODULOS, ACERTOS_MINIMOS, XP_MODULO,
+  moduloPorSlug, moduloLiberado, indiceAtual,
+} from "./lib/curriculum";
+import { loadProgresso, saveProgresso, marcarPagina, registrarQuiz } from "./lib/learnProgress";
 
 /* ------------------------------------------------------------------ */
 /*  Tema (claro / escuro)                                             */
@@ -142,7 +147,7 @@ function AuthedApp({ C, dark, setDark, session }) {
 function MainApp({ C, dark, setDark, demo, session, state, onRefresh }) {
   const [booted, setBooted] = useState(demo ? false : true); // onboarding
   const [tab, setTab] = useState("inicio");
-  const [lesson, setLesson] = useState(null);
+  const [moduloAberto, setModuloAberto] = useState(null); // slug do módulo em leitura
 
   // ---- Derivar o "user" e coleções a partir do estado real ou demo ----
   const demoUser = { nome: "Você", instituicao: "Nubank", aporte: 2000, risco: "moderado",
@@ -168,6 +173,32 @@ function MainApp({ C, dark, setDark, demo, session, state, onRefresh }) {
   useEffect(() => { if (!demo && state) setXp(state.xp ?? 0); }, [state, demo]);
   const nivel = Math.floor(xp / 400) + 1;
   const xpNivel = xp % 400;
+
+  // ---- Trilha "Aprender": progresso por usuário, começando do zero ----
+  const learnId = demo ? "demo" : session?.user?.id;
+  const [progresso, setProgresso] = useState(() => loadProgresso(learnId));
+  useEffect(() => { setProgresso(loadProgresso(learnId)); }, [learnId]);
+
+  function guardarProgresso(atualizar) {
+    setProgresso((prev) => {
+      const next = atualizar(prev);
+      saveProgresso(learnId, next);
+      return next;
+    });
+  }
+  function aoLerPagina(slug, pagina) {
+    guardarProgresso((p) => marcarPagina(p, slug, pagina));
+  }
+  function aoTerminarQuiz(slug, acertos, aprovado) {
+    const jaConcluido = !!progresso?.[slug]?.concluido;
+    guardarProgresso((p) => registrarQuiz(p, slug, acertos, aprovado));
+    if (aprovado && !jaConcluido) {
+      setXp(x => x + XP_MODULO);
+      if (!demo && session) {
+        addXp(session.user.id, `modulo:${slug}`, XP_MODULO).catch(() => { /* silencioso */ });
+      }
+    }
+  }
 
   // ---- Itens do plano do mês ----
   const demoItems = [
@@ -233,7 +264,7 @@ function MainApp({ C, dark, setDark, demo, session, state, onRefresh }) {
         {tab === "inicio" && <Dashboard C={C} user={user} lucro={lucro} rentab={rentab} goals={goals} items={items} history={history} />}
         {tab === "metas" && <Goals C={C} goals={goals} patrimonio={user.patrimonio} aporte={user.aporte} />}
         {tab === "mentor" && <Mentor C={C} user={user} lucro={lucro} ctx={mentorCtx} />}
-        {tab === "aprender" && <Learn C={C} onOpen={setLesson} />}
+        {tab === "aprender" && <Learn C={C} progresso={progresso} onOpen={setModuloAberto} />}
         {tab === "calc" && <Calc C={C} aporteInicial={user.aporte} />}
       </div>
 
@@ -243,7 +274,11 @@ function MainApp({ C, dark, setDark, demo, session, state, onRefresh }) {
           onToggle={persistToggle} onComplete={persistComplete} demo={demo} />
       )}
 
-      {lesson && <LessonModal C={C} lesson={lesson} onClose={() => setLesson(null)} />}
+      {moduloAberto && moduloPorSlug(moduloAberto) && (
+        <ModuleReader C={C} modulo={moduloPorSlug(moduloAberto)} progresso={progresso}
+          onPagina={aoLerPagina} onConcluir={aoTerminarQuiz}
+          onClose={() => setModuloAberto(null)} />
+      )}
 
       <BottomNav C={C} tab={tab} setTab={setTab} />
     </div>
@@ -964,62 +999,313 @@ function Mentor({ C, user, lucro, ctx }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Aprender                                                           */
+/*  Aprender — trilha de 18 módulos com aulas e quiz de 10 perguntas   */
 /* ------------------------------------------------------------------ */
-const MODULES = [
-  { t: "Mentalidade Financeira", ic: "🧠", done: true }, { t: "Organização Financeira", ic: "📊", done: true },
-  { t: "Como funciona o dinheiro", ic: "💵", done: true }, { t: "Inflação", ic: "🎈", done: false, cur: true },
-  { t: "CDI e Selic", ic: "📈", done: false }, { t: "Tesouro Direto", ic: "🏛️", done: false },
-  { t: "Renda Fixa", ic: "🔒", done: false }, { t: "Renda Variável", ic: "🎢", done: false },
-  { t: "ETF", ic: "🧺", done: false }, { t: "Ações", ic: "🏢", done: false },
-  { t: "Fundos Imobiliários", ic: "🏠", done: false }, { t: "Diversificação", ic: "🍱", done: false },
-  { t: "Juros Compostos", ic: "❄️", done: false }, { t: "Gestão de Risco", ic: "🛡️", done: false },
-  { t: "Independência Financeira", ic: "🕊️", done: false }, { t: "Psicologia do Investidor", ic: "🧭", done: false },
-  { t: "Erros mais comuns", ic: "⚠️", done: false }, { t: "Aposentadoria", ic: "🌅", done: false },
-];
-function Learn({ C, onOpen }) {
-  const doneN = MODULES.filter(m => m.done).length;
+function Learn({ C, progresso, onOpen }) {
+  const concluidos = CURRICULO.filter(m => progresso?.[m.slug]?.concluido).length;
+  const atual = indiceAtual(progresso);
+  const pct = (concluidos / TOTAL_MODULOS) * 100;
+
   return (
     <div style={{ paddingBottom: 8 }}>
-      <SectionTitle C={C} icon={GraduationCap} title="Aprender" sub={`${doneN} de ${MODULES.length} módulos · aulas de menos de 5 min`} />
+      <SectionTitle C={C} icon={GraduationCap} title="Aprender"
+        sub={`${concluidos} de ${TOTAL_MODULOS} módulos concluídos · cada módulo termina com um quiz de 10 perguntas`} />
       <div style={{ height: 8, borderRadius: 8, background: C.surfaceAlt, overflow: "hidden", marginBottom: 16 }}>
-        <div style={{ width: `${(doneN / MODULES.length) * 100}%`, height: "100%", background: C.hero }} />
+        <div style={{ width: `${pct}%`, height: "100%", background: C.hero, transition: "width .4s" }} />
       </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {MODULES.map((m, i) => (
-          <button key={i} onClick={() => onOpen(m)} style={{ textAlign: "left", background: C.surface, cursor: "pointer",
-            border: `1.5px solid ${m.cur ? C.primary : C.border}`, borderRadius: 18, padding: 14, position: "relative" }}>
-            <div style={{ fontSize: 26, marginBottom: 8 }}>{m.ic}</div>
-            <div style={{ fontWeight: 700, fontSize: 13.5, color: C.text, lineHeight: 1.25 }}>{m.t}</div>
-            <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 700, color: m.done ? C.positive : m.cur ? C.primary : C.textMut }}>
-              {m.done ? "Concluído ✓" : m.cur ? "Continuar →" : "Bloqueado"}
-            </div>
-          </button>
-        ))}
+        {CURRICULO.map((m, i) => {
+          const p = progresso?.[m.slug] || {};
+          const liberado = moduloLiberado(i, progresso);
+          const concluido = !!p.concluido;
+          const emAndamento = !concluido && liberado && (p.pagina > 0 || p.tentativas > 0);
+          const destaque = !concluido && i === atual;
+
+          let status = "Começar →";
+          if (concluido) status = `Concluído ✓ · ${p.nota}/10`;
+          else if (!liberado) status = "Bloqueado";
+          else if (emAndamento) status = `Continuar · aula ${Math.min(p.pagina + 1, m.paginas.length)} de ${m.paginas.length}`;
+
+          return (
+            <button key={m.slug} onClick={() => liberado && onOpen(m.slug)} disabled={!liberado}
+              style={{ textAlign: "left", background: C.surface, cursor: liberado ? "pointer" : "default",
+                border: `1.5px solid ${destaque ? C.primary : C.border}`, borderRadius: 18, padding: 14,
+                position: "relative", opacity: liberado ? 1 : 0.55 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ fontSize: 26, marginBottom: 8 }}>{m.icone}</div>
+                {!liberado && <Lock size={14} color={C.textMut} />}
+                {concluido && <Check size={16} color={C.positive} />}
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 13.5, color: C.text, lineHeight: 1.25 }}>{m.titulo}</div>
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>
+                {m.paginas.length} aulas · quiz de {m.quiz.length}
+              </div>
+              <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 700,
+                color: concluido ? C.positive : !liberado ? C.textMut : C.primary }}>
+                {status}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ fontSize: 11.5, color: C.textMut, marginTop: 14, lineHeight: 1.5 }}>
+        Conteúdo educacional. Conclua o quiz com pelo menos {ACERTOS_MINIMOS} acertos para liberar o módulo seguinte.
       </div>
     </div>
   );
 }
-function LessonModal({ C, lesson, onClose }) {
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 60, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: C.surface, width: "100%", maxWidth: 480, borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 24, maxHeight: "82vh", overflowY: "auto" }}>
-        <div style={{ width: 40, height: 4, borderRadius: 4, background: C.border, margin: "0 auto 18px" }} />
-        <div style={{ fontSize: 40, marginBottom: 10 }}>{lesson.ic}</div>
-        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5, marginBottom: 4 }}>{lesson.t}</div>
-        <div style={{ fontSize: 12.5, color: C.textMut, marginBottom: 16 }}>Aula 1 de 4 · 3 min de leitura</div>
-        <p style={{ fontSize: 15, lineHeight: 1.6, color: C.text, marginBottom: 14 }}>
-          Imagine que você guarda R$100 embaixo do colchão. Um ano depois, ainda são R$100 — só que as coisas ficaram mais caras. Esse "encolhimento" invisível é o tema deste módulo, explicado do jeito mais simples possível, com exemplos do dia a dia.
-        </p>
-        <div style={{ background: C.primarySoft, borderRadius: 16, padding: 15, marginBottom: 18 }}>
-          <div style={{ fontWeight: 700, fontSize: 13.5, color: C.primary, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-            <Info size={15} /> Em uma frase
-          </div>
-          <div style={{ fontSize: 14, color: C.text, lineHeight: 1.5 }}>Investir é, antes de tudo, correr mais rápido do que a inflação.</div>
+
+/* Renderiza um bloco de conteúdo da aula. */
+function Bloco({ C, b }) {
+  if (b.t === "chave") {
+    return (
+      <div style={{ background: C.primarySoft, borderRadius: 16, padding: 15, marginBottom: 14 }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: C.primary, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+          <Info size={15} /> Em uma frase
         </div>
-        <button onClick={onClose} style={{ width: "100%", padding: 15, borderRadius: 15, border: "none", background: C.primary, color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
-          Fazer o quizz e concluir
-        </button>
+        <div style={{ fontSize: 14.5, color: C.text, lineHeight: 1.5, fontWeight: 600 }}>{b.x}</div>
+      </div>
+    );
+  }
+  if (b.t === "exemplo") {
+    return (
+      <div style={{ background: C.surfaceAlt, borderRadius: 16, padding: 15, marginBottom: 14, borderLeft: `3px solid ${C.accent}` }}>
+        <div style={{ fontWeight: 700, fontSize: 12.5, color: C.accent, marginBottom: 5, display: "flex", alignItems: "center", gap: 6 }}>
+          <Sparkles size={14} /> Na prática
+        </div>
+        <div style={{ fontSize: 14, color: C.text, lineHeight: 1.55 }}>{b.x}</div>
+      </div>
+    );
+  }
+  if (b.t === "lista") {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 16 }}>
+        {b.x.map((item, i) => (
+          <div key={i} style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
+            <div style={{ width: 6, height: 6, borderRadius: 6, background: C.primary, marginTop: 7, flexShrink: 0 }} />
+            <div style={{ fontSize: 14.5, lineHeight: 1.5, color: C.text }}>{item}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <p style={{ fontSize: 15, lineHeight: 1.62, color: C.text, marginTop: 0, marginBottom: 14 }}>{b.x}</p>;
+}
+
+/* Embaralha as alternativas para que a posição não entregue a resposta. */
+function embaralharQuiz(quiz) {
+  return quiz.map((q) => {
+    const idx = q.o.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [idx[i], idx[j]] = [idx[j], idx[i]];
+    }
+    return { ...q, o: idx.map((i) => q.o[i]), r: idx.indexOf(q.r) };
+  });
+}
+
+/* Leitor do módulo: passa por todas as aulas e depois aplica o quiz. */
+function ModuleReader({ C, modulo, progresso, onPagina, onConcluir, onClose }) {
+  const salvo = progresso?.[modulo.slug] || {};
+  const total = modulo.paginas.length;
+  const [pagina, setPagina] = useState(Math.min(salvo.pagina || 0, total - 1));
+  const [view, setView] = useState("aula"); // aula | quiz | resultado
+  const [qIdx, setQIdx] = useState(0);
+  const [escolha, setEscolha] = useState(null);
+  const [acertos, setAcertos] = useState(0);
+  const [tentativa, setTentativa] = useState(0);
+  const topRef = useRef(null);
+
+  // Alternativas embaralhadas a cada tentativa do quiz.
+  const perguntas = useMemo(() => embaralharQuiz(modulo.quiz), [modulo.slug, tentativa]);
+
+  useEffect(() => { topRef.current?.scrollTo({ top: 0, behavior: "smooth" }); }, [pagina, qIdx, view]);
+
+  function avancar() {
+    if (pagina < total - 1) {
+      const prox = pagina + 1;
+      setPagina(prox);
+      onPagina(modulo.slug, prox);
+    } else {
+      onPagina(modulo.slug, total - 1);
+      iniciarQuiz();
+    }
+  }
+  function iniciarQuiz() {
+    setTentativa(t => t + 1);
+    setQIdx(0); setEscolha(null); setAcertos(0); setView("quiz");
+  }
+  function responder(i) {
+    if (escolha !== null) return;
+    setEscolha(i);
+    if (i === perguntas[qIdx].r) setAcertos(a => a + 1);
+  }
+  function proximaPergunta() {
+    if (qIdx < perguntas.length - 1) {
+      setQIdx(qIdx + 1);
+      setEscolha(null);
+    } else {
+      const aprovado = acertos >= ACERTOS_MINIMOS;
+      onConcluir(modulo.slug, acertos, aprovado);
+      setView("resultado");
+    }
+  }
+
+  const barra = view === "aula" ? ((pagina + 1) / total) * 100 : ((qIdx + 1) / perguntas.length) * 100;
+  const q = perguntas[qIdx];
+  const aprovado = acertos >= ACERTOS_MINIMOS;
+
+  const btn = (bg, cor) => ({ padding: "15px 18px", borderRadius: 15, border: "none", cursor: "pointer",
+    background: bg, color: cor, fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center",
+    justifyContent: "center", gap: 8, width: "100%" });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, background: C.bg, display: "flex", justifyContent: "center" }}>
+      <div style={{ width: "100%", maxWidth: 480, display: "flex", flexDirection: "column", height: "100%" }}>
+        {/* Cabeçalho */}
+        <div style={{ padding: "14px 18px 10px", borderBottom: `1px solid ${C.border}`, background: C.surface }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <button onClick={onClose} style={{ background: C.surfaceAlt, border: "none", borderRadius: 11, width: 32, height: 32,
+              display: "grid", placeItems: "center", color: C.text, cursor: "pointer", flexShrink: 0 }}>
+              <ArrowLeft size={17} />
+            </button>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: -0.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {modulo.icone} {modulo.titulo}
+              </div>
+              <div style={{ fontSize: 11.5, color: C.textMut, marginTop: 2 }}>
+                {view === "aula" && `Aula ${pagina + 1} de ${total} · ${modulo.paginas[pagina].min} min de leitura`}
+                {view === "quiz" && `Quiz · pergunta ${qIdx + 1} de ${modulo.quiz.length}`}
+                {view === "resultado" && "Resultado do quiz"}
+              </div>
+            </div>
+          </div>
+          <div style={{ height: 5, borderRadius: 5, background: C.surfaceAlt, overflow: "hidden" }}>
+            <div style={{ width: `${view === "resultado" ? 100 : barra}%`, height: "100%",
+              background: view === "aula" ? C.hero : C.accent, transition: "width .3s" }} />
+          </div>
+        </div>
+
+        {/* Conteúdo */}
+        <div ref={topRef} style={{ flex: 1, overflowY: "auto", padding: "20px 18px 8px" }}>
+          {view === "aula" && (
+            <>
+              <div style={{ display: "flex", gap: 5, marginBottom: 16 }}>
+                {modulo.paginas.map((_, i) => (
+                  <div key={i} style={{ flex: 1, height: 4, borderRadius: 4,
+                    background: i <= pagina ? C.primary : C.border }} />
+                ))}
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: -0.5, lineHeight: 1.2, marginBottom: 16 }}>
+                {modulo.paginas[pagina].titulo}
+              </div>
+              {modulo.paginas[pagina].blocos.map((b, i) => <Bloco key={i} C={C} b={b} />)}
+            </>
+          )}
+
+          {view === "quiz" && (
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, marginBottom: 8 }}>
+                ACERTOS: {acertos} · MÍNIMO PARA CONCLUIR: {ACERTOS_MINIMOS}
+              </div>
+              <div style={{ fontSize: 19, fontWeight: 800, lineHeight: 1.3, letterSpacing: -0.3, marginBottom: 18 }}>
+                {q.p}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {q.o.map((op, i) => {
+                  const respondeu = escolha !== null;
+                  const correta = i === q.r;
+                  const marcada = escolha === i;
+                  let bg = C.surface, bd = C.border, cor = C.text;
+                  if (respondeu && correta) { bg = C.primarySoft; bd = C.positive; }
+                  else if (respondeu && marcada) { bd = C.negative; }
+                  return (
+                    <button key={i} onClick={() => responder(i)} disabled={respondeu}
+                      style={{ textAlign: "left", padding: "14px 16px", borderRadius: 15, background: bg, color: cor,
+                        border: `1.5px solid ${bd}`, fontSize: 14.5, fontWeight: marcada || (respondeu && correta) ? 700 : 500,
+                        cursor: respondeu ? "default" : "pointer", display: "flex", justifyContent: "space-between",
+                        alignItems: "center", gap: 10, lineHeight: 1.4 }}>
+                      <span>{op}</span>
+                      {respondeu && correta && <Check size={17} color={C.positive} style={{ flexShrink: 0 }} />}
+                      {respondeu && marcada && !correta && <span style={{ color: C.negative, fontWeight: 800, flexShrink: 0 }}>✕</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {escolha !== null && (
+                <div style={{ marginTop: 14, background: C.surfaceAlt, borderRadius: 15, padding: 14,
+                  borderLeft: `3px solid ${escolha === q.r ? C.positive : C.negative}` }}>
+                  <div style={{ fontWeight: 800, fontSize: 13.5, color: escolha === q.r ? C.positive : C.negative, marginBottom: 4 }}>
+                    {escolha === q.r ? "Acertou!" : "Não é essa"}
+                  </div>
+                  <div style={{ fontSize: 14, lineHeight: 1.5, color: C.text }}>{q.e}</div>
+                </div>
+              )}
+            </>
+          )}
+
+          {view === "resultado" && (
+            <div style={{ textAlign: "center", paddingTop: 12 }}>
+              <div style={{ width: 72, height: 72, borderRadius: 24, margin: "0 auto 16px", display: "grid", placeItems: "center",
+                background: aprovado ? C.hero : C.surfaceAlt, color: aprovado ? "#fff" : C.textMut }}>
+                {aprovado ? <Trophy size={34} /> : <RefreshCw size={30} />}
+              </div>
+              <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: -1 }}>{acertos}/{modulo.quiz.length}</div>
+              <div style={{ fontSize: 19, fontWeight: 800, marginTop: 6 }}>
+                {aprovado ? "Módulo concluído! 🎉" : "Quase lá"}
+              </div>
+              <div style={{ color: C.textMut, fontSize: 14, lineHeight: 1.55, marginTop: 8, maxWidth: 320, marginLeft: "auto", marginRight: "auto" }}>
+                {aprovado
+                  ? `Você ganhou +${XP_MODULO} XP e liberou o próximo módulo da trilha.`
+                  : `Você precisa de ${ACERTOS_MINIMOS} acertos para concluir. Revise as aulas e tente de novo — dá para repetir quantas vezes quiser.`}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Ações */}
+        <div style={{ padding: "12px 18px 20px", borderTop: `1px solid ${C.border}`, background: C.surface,
+          display: "flex", gap: 10 }}>
+          {view === "aula" && (
+            <>
+              {pagina > 0 && (
+                <button onClick={() => setPagina(pagina - 1)}
+                  style={{ ...btn(C.surfaceAlt, C.text), width: 110, fontSize: 14 }}>
+                  <ArrowLeft size={16} /> Voltar
+                </button>
+              )}
+              <button onClick={avancar} style={btn(C.primary, "#fff")}>
+                {pagina < total - 1 ? <>Continuar <ChevronRight size={18} /></> : <>Fazer o quiz ({modulo.quiz.length} perguntas) <ChevronRight size={18} /></>}
+              </button>
+            </>
+          )}
+
+          {view === "quiz" && (
+            <button onClick={proximaPergunta} disabled={escolha === null}
+              style={{ ...btn(escolha === null ? C.surfaceAlt : C.primary, escolha === null ? C.textMut : "#fff"),
+                cursor: escolha === null ? "default" : "pointer" }}>
+              {escolha === null
+                ? "Escolha uma resposta"
+                : qIdx < modulo.quiz.length - 1 ? <>Próxima pergunta <ChevronRight size={18} /></> : "Ver resultado"}
+            </button>
+          )}
+
+          {view === "resultado" && (
+            <>
+              <button onClick={() => { setPagina(0); setView("aula"); }}
+                style={{ ...btn(C.surfaceAlt, C.text), fontSize: 14 }}>
+                Rever aulas
+              </button>
+              {aprovado
+                ? <button onClick={onClose} style={btn(C.primary, "#fff")}>Concluir</button>
+                : <button onClick={iniciarQuiz} style={btn(C.primary, "#fff")}>
+                    <RefreshCw size={16} /> Refazer o quiz
+                  </button>}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

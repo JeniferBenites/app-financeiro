@@ -47,23 +47,27 @@ export async function resolveEmailByCpf(cpf) {
   return data || null; // e-mail (string) ou null
 }
 
-/* ---- Auth: login por CPF, cadastro com e-mail (confirma a conta) --------- */
+/* ---- Auth: cadastro e login só com CPF ----------------------------------- */
+// Não pedimos e-mail: o identificador interno é CPF@patrimonio10x.app, gerado
+// aqui. Assim ninguém precisa de caixa de entrada para criar a conta.
+export function cpfToEmail(cpf) {
+  return `${onlyDigits(cpf)}@${CPF_EMAIL_DOMAIN}`;
+}
+
 export async function signIn(cpf, password) {
-  const email = await resolveEmailByCpf(cpf);
-  if (!email) throw new Error("cpf_nao_encontrado");
+  // Tenta o e-mail interno primeiro; se a conta for antiga (cadastrada com
+  // e-mail de verdade), cai na busca pelo CPF no banco.
+  const email = (await resolveEmailByCpf(cpf)) || cpfToEmail(cpf);
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data;
 }
 
-export async function signUp({ nome, cpf, email, password }) {
+export async function signUp({ nome, cpf, password }) {
   const { data, error } = await supabase.auth.signUp({
-    email,
+    email: cpfToEmail(cpf),
     password,
-    options: {
-      data: { nome: nome || "Você", cpf: onlyDigits(cpf) },
-      emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
-    },
+    options: { data: { nome: nome || "Você", cpf: onlyDigits(cpf) } },
   });
   if (error) throw error;
   return data;

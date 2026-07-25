@@ -7,15 +7,16 @@
 //   node scripts/release-ota.mjs 1.1.0                # versão específica
 //   node scripts/release-ota.mjs --notas "o que mudou"
 //
-// Para enviar direto ao Supabase Storage (bucket "downloads"), defina a chave
-// de serviço antes de rodar — ela nunca entra no código:
-//   SUPABASE_SERVICE_KEY=eyJ... node scripts/release-ota.mjs
+// O envio ao Supabase Storage (bucket "downloads") é automático: a chave é lida
+// de supabase/.env (SUPABASE_SECRET_KEY) ou da variável de ambiente
+// SUPABASE_SERVICE_KEY. Ela nunca entra no código nem no bundle.
+// Sem chave nenhuma, o script só gera os arquivos e diz o que subir na mão.
 //
-// Sem a chave, o script só gera os arquivos e mostra o que subir na mão.
+//   node scripts/release-ota.mjs --somente-upload   # reenvia a versão atual
 // ============================================================================
 
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 import { deflateRawSync } from "node:zlib";
@@ -29,51 +30,73 @@ const args = process.argv.slice(2);
 const iNotas = args.indexOf("--notas");
 const notas = iNotas >= 0 ? args[iNotas + 1] || "" : "";
 const versaoArg = args.find((a) => /^\d+\.\d+\.\d+$/.test(a));
+const somenteUpload = args.includes("--somente-upload");
 
 /* ---- versão -------------------------------------------------------------- */
 const pkgPath = join(raiz, "package.json");
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-const versao = versaoArg || subirPatch(pkg.version);
+const versao = somenteUpload ? pkg.version : (versaoArg || subirPatch(pkg.version));
 
 function subirPatch(v) {
   const [a, b, c] = String(v).split(".").map((n) => parseInt(n, 10) || 0);
   return `${a}.${b}.${c + 1}`;
 }
 
-console.log(`\nPublicando versão ${versao} (anterior: ${pkg.version})\n`);
-
-pkg.version = versao;
-writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-
-/* ---- build --------------------------------------------------------------- */
-console.log("1/4  Gerando o build…");
-execSync("npm run build", { cwd: raiz, stdio: "inherit" });
-
-/* ---- zip do dist/ -------------------------------------------------------- */
-console.log("\n2/4  Empacotando o dist/…");
 const zipNome = `bundle-${versao}.zip`;
 const zipPath = join(raiz, zipNome);
-const arquivos = listar(join(raiz, "dist")).map((abs) => ({
-  nome: relative(join(raiz, "dist"), abs).split("\\").join("/"), // ZIP usa "/"
-  dados: readFileSync(abs),
-}));
-writeFileSync(zipPath, criarZip(arquivos));
-console.log(`     ${zipNome} — ${arquivos.length} arquivos, ${(statSync(zipPath).size / 1024).toFixed(0)} KB`);
+const manifestoPath = join(raiz, "app-manifest.json");
+let manifesto;
 
-/* ---- manifesto ----------------------------------------------------------- */
-console.log("\n3/4  Gerando o app-manifest.json…");
-const manifesto = {
-  version: versao,
-  url: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${zipNome}`,
-  notes: notas || `Versão ${versao}`,
-};
-writeFileSync(join(raiz, "app-manifest.json"), JSON.stringify(manifesto) + "\n");
-console.log("     " + JSON.stringify(manifesto));
+if (somenteUpload) {
+  console.log(`\nReenviando a versão ${versao} (sem novo build)\n`);
+  if (!existsSync(zipPath)) {
+    console.error(`Não achei ${zipNome}. Rode sem --somente-upload para gerar.`);
+    process.exit(1);
+  }
+  manifesto = JSON.parse(readFileSync(manifestoPath, "utf8"));
+} else {
+  console.log(`\nPublicando versão ${versao} (anterior: ${pkg.version})\n`);
+  pkg.version = versao;
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 
-/* ---- upload (opcional) --------------------------------------------------- */
-const chave = process.env.SUPABASE_SERVICE_KEY;
+  /* ---- build ------------------------------------------------------------- */
+  console.log("1/4  Gerando o build…");
+  execSync("npm run build", { cwd: raiz, stdio: "inherit" });
+
+  /* ---- zip do dist/ ------------------------------------------------------ */
+  console.log("\n2/4  Empacotando o dist/…");
+  const arquivos = listar(join(raiz, "dist")).map((abs) => ({
+    nome: relative(join(raiz, "dist"), abs).split("\\").join("/"), // ZIP usa "/"
+    dados: readFileSync(abs),
+  }));
+  writeFileSync(zipPath, criarZip(arquivos));
+  console.log(`     ${zipNome} — ${arquivos.length} arquivos, ${(statSync(zipPath).size / 1024).toFixed(0)} KB`);
+
+  /* ---- manifesto --------------------------------------------------------- */
+  console.log("\n3/4  Gerando o app-manifest.json…");
+  manifesto = {
+    version: versao,
+    url: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${zipNome}`,
+    notes: notas || `Versão ${versao}`,
+  };
+  writeFileSync(manifestoPath, JSON.stringify(manifesto) + "\n");
+  console.log("     " + JSON.stringify(manifesto));
+}
+
+/* ---- upload -------------------------------------------------------------- */
+// A chave vem do ambiente ou de supabase/.env — nunca do código.
+const chave = process.env.SUPABASE_SERVICE_KEY || chaveDoEnvLocal();
+
+function chaveDoEnvLocal() {
+  const p = join(raiz, "supabase", ".env");
+  if (!existsSync(p)) return null;
+  const m = readFileSync(p, "utf8")
+    .match(/^\s*(?:SUPABASE_SECRET_KEY|SUPABASE_SERVICE_KEY)\s*=\s*(.+)\s*$/m);
+  const v = m?.[1]?.trim().replace(/^["']|["']$/g, "");
+  return v || null;
+}
 if (!chave) {
-  console.log(`\n4/4  Upload não feito (sem SUPABASE_SERVICE_KEY).
+  console.log(`\n4/4  Upload não feito (sem chave em supabase/.env nem SUPABASE_SERVICE_KEY).
 
      Suba estes dois arquivos no bucket "${BUCKET}" do Supabase Storage,
      nesta ordem (o manifesto por último, senão o app aponta para um zip
@@ -96,6 +119,9 @@ async function subir(nome, corpo, tipo) {
   const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${nome}`, {
     method: "POST",
     headers: {
+      // As chaves novas do Supabase (sb_secret_...) não são JWT: o Storage só
+      // as aceita no header "apikey".
+      apikey: chave,
       Authorization: `Bearer ${chave}`,
       "Content-Type": tipo,
       "x-upsert": "true",

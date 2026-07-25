@@ -45,6 +45,38 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 Para abrir no Android Studio: `npx cap open android`.
 Para iOS seria `npx cap add ios` — mas exige um Mac com Xcode.
 
+## Atualizar o app sem reinstalar (OTA)
+
+O app checa um manifesto no Supabase Storage. Quando há versão nova, aparece
+uma barra na tela com o botão **"Atualizar agora"** — nada é baixado ou trocado
+sem o usuário tocar nele. A checagem acontece ao abrir o app, ao voltar para ele
+e a cada 15 minutos com ele aberto.
+
+Para publicar uma atualização:
+
+```bash
+npm run release:ota -- --notas "o que mudou nesta versão"
+```
+
+O script sobe a versão no `package.json`, gera o build, empacota o `dist/` em
+`bundle-<versao>.zip` e escreve o `app-manifest.json`. Para enviar direto ao
+Storage, informe a chave de serviço (ela nunca fica no código):
+
+```bash
+SUPABASE_SERVICE_KEY=eyJ... npm run release:ota -- --notas "o que mudou"
+```
+
+Sem a chave, o script só gera os arquivos e mostra o que subir na mão no bucket
+`downloads` — primeiro o zip, **depois** o manifesto (o manifesto é o gatilho:
+se ele subir antes, o app aponta para um pacote que ainda não existe).
+
+Só mexa no APK (recompilar e reinstalar) quando mudar algo nativo — plugin novo,
+permissão, ícone, nome do app. Mudança de tela, texto ou lógica React vai por OTA.
+
+Para ver a barra de atualização no navegador, sem precisar de app instalado:
+`http://localhost:5173/?testeUpdate=1` (só mostra a interface; o download real
+existe apenas no app nativo).
+
 ## Configurar o Supabase (para o modo real)
 
 1. **URL + chave** — em `.env.local`, preencha `VITE_SUPABASE_URL` com a URL do

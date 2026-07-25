@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { fetchQuotes, fetchDolar, fetchOne, fetchDefesaIA, detectarTicker, analisar, analisarLista } from "./lib/market";
 import { useSession } from "./hooks/useSession";
+import { useAppUpdate } from "./hooks/useAppUpdate";
 import Auth from "./screens/Auth.jsx";
 import {
   loadUserState, togglePlanItem, completeMonthlyPlan, saveOnboarding,
@@ -76,17 +77,106 @@ export default function App() {
   const [dark, setDark] = useState(false);
   const C = tokens(dark);
   const { session, loading, configured } = useSession();
+  const update = useAppUpdate();
 
-  // Modo demo (sem Supabase): mantém a experiência do protótipo.
-  if (!configured) {
-    return <MainApp C={C} dark={dark} setDark={setDark} demo />;
+  // A barra de atualização aparece em qualquer tela (login, onboarding ou app).
+  const tela = (() => {
+    if (!configured) return <MainApp C={C} dark={dark} setDark={setDark} demo />;
+    if (loading) return <Splash C={C} />;
+    if (!session) return <Auth C={C} dark={dark} setDark={setDark} />;
+    return <AuthedApp C={C} dark={dark} setDark={setDark} session={session} />;
+  })();
+
+  return (
+    <>
+      {tela}
+      <UpdateBanner C={C} update={update} />
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Aviso de versão nova — o usuário decide quando atualizar           */
+/* ------------------------------------------------------------------ */
+function UpdateBanner({ C, update }) {
+  const { status, info, progresso, atualizar, dispensar } = update;
+  if (status === "idle") return null;
+
+  const caixa = {
+    position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 92,
+    width: "calc(100% - 32px)", maxWidth: 448, zIndex: 70,
+    background: C.surface, border: `1.5px solid ${C.primary}`, borderRadius: 20,
+    padding: 15, boxShadow: "0 12px 32px rgba(0,0,0,.22)",
+    fontFamily: "'Inter',system-ui,sans-serif", color: C.text,
+  };
+
+  if (status === "baixando") {
+    return (
+      <div style={caixa}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+          <RefreshCw size={17} color={C.primary} />
+          <div style={{ fontWeight: 700, fontSize: 14.5 }}>Baixando a atualização… {progresso}%</div>
+        </div>
+        <div style={{ height: 6, borderRadius: 6, background: C.surfaceAlt, overflow: "hidden" }}>
+          <div style={{ width: `${progresso}%`, height: "100%", background: C.hero, transition: "width .3s" }} />
+        </div>
+        <div style={{ fontSize: 12, color: C.textMut, marginTop: 8 }}>
+          O app vai reabrir sozinho na versão nova. Não feche agora.
+        </div>
+      </div>
+    );
   }
 
-  if (loading) return <Splash C={C} />;
+  if (status === "erro") {
+    return (
+      <div style={caixa}>
+        <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 4 }}>Não deu para atualizar</div>
+        <div style={{ fontSize: 13, color: C.textMut, marginBottom: 12, lineHeight: 1.45 }}>
+          Verifique sua internet e tente de novo. O app continua funcionando na versão atual.
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={dispensar} style={{ flex: 1, padding: "11px 0", borderRadius: 13, border: "none",
+            background: C.surfaceAlt, color: C.text, fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>
+            Agora não
+          </button>
+          <button onClick={atualizar} style={{ flex: 1, padding: "11px 0", borderRadius: 13, border: "none",
+            background: C.primary, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>
+            Tentar de novo
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-  if (!session) return <Auth C={C} dark={dark} setDark={setDark} />;
-
-  return <AuthedApp C={C} dark={dark} setDark={setDark} session={session} />;
+  // status === "disponivel"
+  return (
+    <div style={caixa}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 10, background: C.hero, display: "grid",
+          placeItems: "center", color: "#fff", flexShrink: 0 }}>
+          <Sparkles size={16} />
+        </div>
+        <div style={{ fontWeight: 800, fontSize: 15 }}>Nova versão disponível</div>
+      </div>
+      <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.45, margin: "6px 0 12px" }}>
+        {info?.notas ? info.notas : "Melhorias e correções novas no app."}
+        {info?.versao && <span style={{ display: "block", marginTop: 3, fontSize: 11.5 }}>
+          versão {info.versao}{info.atual ? ` · você está na ${info.atual}` : ""}
+        </span>}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={dispensar} style={{ width: 108, padding: "12px 0", borderRadius: 13, border: "none",
+          background: C.surfaceAlt, color: C.text, fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>
+          Depois
+        </button>
+        <button onClick={atualizar} style={{ flex: 1, padding: "12px 0", borderRadius: 13, border: "none",
+          background: C.primary, color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          <RefreshCw size={16} /> Atualizar agora
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function Splash({ C }) {
